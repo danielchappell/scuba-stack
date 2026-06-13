@@ -1,18 +1,19 @@
 ---
 name: adversarial-review
-description: Procedure for gating work with fresh, independent, lensed reviewers until a CLEAN verdict, and for front-running an external automated reviewer by tuning your own reviewer to the bug categories it actually finds. Use at every quality gate: spec, plan, and code or PR review. Make sure to use this whenever reviewing or QAing substantive work before it advances, scaling the depth to the stakes.
+description: Procedure for gating work with fresh, independent, lensed hunters until a CLEAN verdict, and for front-running an external automated reviewer by tuning your own hunters to the bug categories it actually finds. Use at every quality gate: spec, plan, and code or PR review. Make sure to use this whenever reviewing or QAing substantive work before it advances, scaling the depth to the stakes.
 ---
 
 # Adversarial Review
 
-A single quality pass misses things. The backbone of quality here is fresh, independent reviewers with distinct lenses, looping until a CLEAN verdict. Complementary lenses repeatedly catch what any one pass, including an external reviewer, misses.
+A single quality pass misses things. The backbone of quality here is fresh, independent hunters with distinct lenses, looping until a CLEAN verdict. Complementary lenses repeatedly catch what any one pass, including an external reviewer, misses.
 
 ## The loop
 
-1. Run reviewers that are **fresh** (not the author, not carrying the build context), **independent** (separate agents), and **lensed** (each with a distinct angle).
-2. Each reviewer verifies against the **actual code, read-only** — pulling the diff with `git` and grounding a finding in real docs (platform, security, library behavior) via web when the lens needs it — cites `file:line`, and separates real findings from speculation.
-3. Classify every finding REAL / DEFERRED / INVALID against the code. Don't blind-trust any reviewer, internal or external; some findings are stale or wrong.
-4. Revise, then re-review. Loop until a confirming pass returns zero real findings. That is CLEAN. A re-trigger is an open loop until that pass comes back, so track it.
+1. Run hunters that are **fresh** (not the author, not carrying the build context), **independent** (separate agents), and **lensed** (each with a distinct angle).
+2. Each hunter verifies against the **actual code** — pulling the diff with `git`, running the touched tests in its own worktree to *prove* a finding rather than reason it, and grounding a finding in real docs (platform, security, library behavior) via web when the lens needs it — cites `file:line`, and separates real findings from speculation. It never `checkout`/`clean`/`reset`s a shared tree.
+3. **Enumerate the whole class, not a few.** A hunter that surfaces three of a kind and stops leaves the fixer patching three while the rest come back as the next round; each lens loops until it goes dry and returns the *complete* list with its shared root, so one fix can close the class. "Found a few" is not done.
+4. Classify every finding REAL / DEFERRED / INVALID against the code. Don't blind-trust any hunter, internal or external; some findings are stale or wrong.
+5. Revise, then re-review. Loop until a confirming pass returns zero real findings. That is CLEAN. A re-trigger is an open loop until that pass comes back, so track it.
 
 ## Lenses by gate
 
@@ -24,7 +25,7 @@ Pick complementary lenses for the artifact. As a starting set:
 
 ## Front-run an external reviewer
 
-If an external automated reviewer is in the loop, run your own reviewer at its grade rather than waiting on its latency. When your reviewer goes dry but the external one keeps finding real bugs, read the categories of the bugs it actually validated, and add those categories as explicit named lenses. Maintain a living lens-list seeded from those hits. This converts your reviewer from a substitute into a front-runner that catches the bug *class* before the external pass does, instead of re-running the same taxonomy and going dry while real bugs remain. A behavioral "dry" result still needs the external confirmation.
+If an external automated reviewer is in the loop, run your own hunters at its grade rather than waiting on its latency. When your hunters go dry but the external one keeps finding real bugs, read the categories of the bugs it actually validated, and add those categories as explicit named lenses. Maintain a living lens-list seeded from those hits. This converts your hunters from a substitute into a front-runner that catches the bug *class* before the external pass does, instead of re-running the same taxonomy and going dry while real bugs remain. A behavioral "dry" result still needs the external confirmation.
 
 At the PR gate, don't serialize against it: open the PR to start the external reviewer, run your own swarm over the diff in parallel (about five lenses for a substantive PR, scaled to stakes), and reconcile both streams into one deduped, classified worklist before fixing. The `ship-gate` skill is that full sequence.
 
@@ -34,7 +35,7 @@ When a finding is fixed, prove the fix: write the test, see it RED, apply the fi
 
 ## Scale to the stakes
 
-This full machinery is for risky work: anything touching isolation, security, contracts, or data. A one-line config fix does not earn three adversarial reviewers. Match the number and depth of lenses to the blast radius; over-gating low-risk work stalls the forward motion that matters as surely as under-reviewing risky work breaks it.
+This full machinery is for risky work: anything touching isolation, security, contracts, or data. A one-line config fix does not earn three adversarial hunters. Match the number and depth of lenses to the blast radius; over-gating low-risk work stalls the forward motion that matters as surely as under-reviewing risky work breaks it.
 
 ## Keep tooling out of here
 

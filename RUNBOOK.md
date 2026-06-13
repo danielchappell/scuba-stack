@@ -20,7 +20,7 @@ Full install is in `INSTALL.md`; the short version:
 ```
 ~/.claude/              # user scope — installed once, shared by every project
   scuba.md              # the always-on pointer (imported by ~/.claude/CLAUDE.md)
-  agents/               # worker pool: architect, bug-fixer, reviewer, senior-implementer,
+  agents/               # worker pool: architect, groomer, hunter, bug-fixer, senior-implementer,
                         #   researcher, intake-drafter, brief-specialist, scribe
   skills/               # chief-of-staff/, team-manager/, ship-gate/, adversarial-review/, …
   .scuba-manifest       # internal: what the installer placed, for clean reinstall
@@ -70,7 +70,7 @@ Recovery after a lost session is a **re-dispatch, not a reconnect** — killed w
 
 ## Models
 
-Everything that judges or writes code runs on Opus: the chief of staff, the managers, the architect, the reviewer, the senior implementer (plan execution), and the bug-fixer (root-cause repair). Only the researcher (gathering), the brief specialist (rendering), and the scribe (roadmap bookkeeping) run on Sonnet. Worker models are pinned in their agent files, so they're automatic. The chief of staff and managers are not pinned, because they run as the launched session and its teammates, so you must start the lead on Opus or the whole judgment layer silently drops with it.
+Everything that judges or writes code runs on Opus: the chief of staff, the managers, the architect, the groomer (slicing epics), the hunter (adversarial finding), the senior implementer (plan execution), and the bug-fixer (root-cause repair). Only the researcher (gathering), the brief specialist (rendering), and the scribe (roadmap bookkeeping) run on Sonnet. Worker models are pinned in their agent files, so they're automatic. The chief of staff and managers are not pinned, because they run as the launched session and its teammates, so you must start the lead on Opus or the whole judgment layer silently drops with it.
 
 ## Cost and behavior notes
 

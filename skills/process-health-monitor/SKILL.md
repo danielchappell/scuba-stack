@@ -17,7 +17,7 @@ For every tracked process:
 
 - **Output mtime** — the file it writes to. Stale beyond ~12 minutes means investigate.
 - **Durable artifacts** — the things it should have produced by now: git SHAs, written files, queue entries. Their presence is proof of life; their absence after enough time is a stall.
-- **Branch / PR state** — has the head moved, did the PR update.
+- **Branch / PR state, both directions** — outbound: has the head moved, did the PR update. **Inbound**: new external-reviewer rounds (read the review *bodies*, not just the count — a fresh round with unread findings is an open loop), mergeability, and commits-behind-base. An idle PR sitting on a waiting review round is a stall you caused, not progress.
 
 Judge liveness from these, never from the presence or absence of a message. A transcript line such as an interruption notice is the tell that an agent was killed rather than finished.
 
@@ -30,6 +30,8 @@ A dispatch or a re-trigger is open until you have confirmed it closed. Track eac
 ## When something is dead or stalled
 
 Recover partial work from its branch and files rather than restarting from zero. This is why workers commit and push per finding: you can read progress from the git head instead of guessing, and a kill costs at most one in-flight change. Don't kill a slow-but-alive agent; make progress observable instead so you don't have to guess.
+
+Recovery only works if work is isolated: every agent that mutates files or runs tests does so in its own worktree, so a kill mid-mutation costs one branch instead of corrupting the shared tree everyone depends on.
 
 ## Breadth is capped by this
 

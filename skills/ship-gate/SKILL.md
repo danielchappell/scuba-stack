@@ -1,29 +1,36 @@
 ---
 name: ship-gate
-description: The ritual for taking completed, verified work up for review. Use the moment a build is done and ready to go up: when finishing a chunk, opening or putting up a PR, or shipping a change. Open the PR first to start the external reviewer, then in parallel run a swarm of fresh independent Opus reviewers over the diff, reconcile their findings with the external reviewer's into one classified list, dispatch the `bug-fixer` to repair the root causes in a single holistic pass, and loop until CLEAN. Make sure to use this whenever work is finished and about to go up for review, so you find your own bugs instead of waiting on the PR queue.
+description: The ritual for taking completed, verified work up for review. Use the moment a build is done and ready to go up: when finishing a chunk, opening or putting up a PR, or shipping a change. Open the PR first to start the external reviewer, then in parallel run a swarm of fresh independent Opus hunters over the diff, reconcile their findings with the external reviewer's into one classified list, dispatch the `bug-fixer` to repair the root causes in a single holistic pass, and loop until CLEAN. Make sure to use this whenever work is finished and about to go up for review, so you find your own bugs instead of waiting on the PR queue.
 ---
 
 # Ship Gate
 
 This is what "done" means for a chunk: not "the build runs," but "the build has survived a parallel adversarial swarm and the external reviewer, and every real finding is repaired at the root." You reach this gate only after the build is verified against the definition of done and the approved spec and plan. Drift from those is a defect even when the code runs; catch it here, not after merge.
 
-The point of the gate is to stop waiting. The external reviewer runs on its own latency; your own reviewers run on yours. Run them at the same time so you are never idle, and so you catch the bug *class* before the external pass does (front-running, per `adversarial-review`).
+The point of the gate is to stop waiting. The external reviewer runs on its own latency; your own hunters run on yours. Run them at the same time so you are never idle, and so you catch the bug *class* before the external pass does (front-running, per `adversarial-review`).
 
 ## The sequence
 
 1. **Open the PR first.** Putting it up starts the external reviewer's clock immediately, so it churns while you work. Do this before anything else at the gate. How the PR is opened and how the external reviewer is triggered are project mechanics; they live in the repo's `CLAUDE.md`.
-2. **Launch the internal swarm in parallel.** Spawn a panel of fresh, independent `reviewer` agents, one lens each, over the diff, per `adversarial-review`. Default to about five for a substantive PR; scale down for a trivial change and up for anything touching isolation, security, contracts, or data. Reviewers are read-only and don't count against the build cap, so a swarm running alongside the work is safe. Each reads the actual diff line-by-line, including any code the fixer has already added, cites `file:line`, and labels findings REAL or SUSPECTED.
-3. **Reconcile the two streams.** When the swarm returns and the external reviewer reports, merge both into one list. Dedupe: five reviewers and an external pass will report the same defect in different words. Classify each finding REAL / DEFERRED / INVALID against the actual code. Don't blind-trust either stream; some external findings are stale or wrong, some internal ones are speculation. The output is one deduped, classified worklist, not five reports and a robot's comments sitting side by side.
+2. **Launch the internal swarm in parallel.** Spawn a panel of fresh, independent `hunter` agents, one lens each, over the diff, per `adversarial-review`. Default to about five for a substantive PR; scale down for a trivial change and up for anything touching isolation, security, contracts, or data. Hunters work in their own worktrees and aren't branch-writers, so a swarm runs safely alongside the work. Each reads the diff line-by-line (running the touched tests to confirm, not just reasoning), cites `file:line`, labels findings REAL or SUSPECTED — and **enumerates the whole class, not a few**, so the fix can be holistic.
+3. **Reconcile the two streams.** When the swarm returns and the external reviewer reports, merge both into one list. Dedupe: five hunters and an external pass will report the same defect in different words. Classify each finding REAL / DEFERRED / INVALID against the actual code. Don't blind-trust either stream; some external findings are stale or wrong, some internal ones are speculation. The output is one deduped, classified worklist, not five reports and a robot's comments sitting side by side.
 4. **Fix at the root, once.** Hand the reconciled worklist to the `bug-fixer` — the Opus root-cause specialist, not a plan-executor — because turning many overlapping findings into one holistic repair is independent-judgment work, not plan execution. It repairs the REAL findings as a single integration pass, per `integrate-dont-bolt-on`, not as N separate patches: overlapping symptoms usually trace to one root cause, so fixing the cause once makes the symptoms fall together. Every fix is non-vacuous (test RED, fix, GREEN, then red-green-refactor) per `adversarial-review`, and the fixer resolves the external/PR threads for the findings it closes, citing the commit. A swarm plus an external reviewer is exactly the situation that tempts a bolt-on per finding and produces the long bug-round tail; resist it here.
 5. **Re-review to CLEAN.** Re-run the loop over the new diff, including the code you just added, until a confirming pass returns zero real findings. A re-trigger of either the swarm or the external reviewer is an open loop until it comes back; track it, and never read absence-of-notification as success (per `process-health-monitor`).
 
-## Done
+## Done, and who merges
 
-The gate is passed, and the chunk is reportable up, when the internal swarm is CLEAN, every real external finding is fixed or explicitly deferred with a stated reason, and the build still verifies against the spec, plan, and definition of done. Until then the work is in-flight, not done. The user is the only one who merges to main; the gate produces a PR ready for that decision, it does not merge.
+A PR passes the gate when the hunter swarm is CLEAN on the current tip, every real external finding is fixed or explicitly deferred with a stated reason, the suite has actually **run** green (not reasoned-correct), and the build matches the spec, plan, and definition of done. Until then it's in-flight, not done.
+
+Two kinds of PR, two merge rules:
+
+- **A groomed story → its epic's integration branch.** The manager **merges it** as soon as it clears the bar above (and the external reviewer has approved, if your setup runs it on non-default-base PRs). Stories flow without the user — that's the point.
+- **The integration branch → main.** Once the epic is assembled there, this PR gets the full swarm + external-reviewer cycle, and **the user merges it.** Agents never merge to main.
+
+If the external reviewer goes silent — no new review within **20 minutes of your last push** — don't keep waiting: the hunter swarm becomes the gate, and you proceed on it (say so to the user). Each push restarts that clock, since a push is what re-triggers the reviewer; so the 20 minutes is always measured from the most recent push, not from when the PR opened. The same fallback applies if the reviewer is rate-limited or down.
 
 ## Scale to the stakes
 
-Five reviewers and the full reconciliation are for substantive changes. A one-line config fix does not earn a swarm; put up the PR, let the external reviewer run, and a single lens is enough. Over-gating trivia stalls the forward motion as surely as under-gating risk breaks it.
+Five hunters and the full reconciliation are for substantive changes. A one-line config fix does not earn a swarm; put up the PR, let the external reviewer run, and a single lens is enough. Over-gating trivia stalls the forward motion as surely as under-gating risk breaks it.
 
 ## Keep tooling out
 

@@ -16,9 +16,9 @@ Scuba Stack inverts that. **The executive layer never does the work, so it never
 
 - The **chief of staff** (the session you talk to) only ever *dispatches, monitors, and surfaces decisions*. It does not triage, review, or build — those are the exact tells it's about to get stuck. Its hands stay free so you can always reach it and keep planning.
 - Work fans out to **managers** (who own a chunk end-to-end) and **workers** (who do the production work), as wide as can be kept healthy on a monitoring tick.
-- The only deliberate serialization point is **you**. There's one human channel, so decisions come to you one at a time, each with a recommendation — everything else runs concurrently behind it.
+- The only deliberate serialization point is **you**. There's one human channel, so decisions come to you one at a time, each with a recommendation — everything else runs concurrently behind it. Even shipping stays off your critical path: large work is sliced into small stories that merge in parallel, and only the finished epic reaches you.
 
-Quality isn't a final step bolted on; it's structural. Every spec, plan, and diff passes through **fresh, independent, lensed reviewers** that loop until the verdict is CLEAN. When an external automated reviewer (e.g. a PR bot) is in the loop, Scuba Stack front-runs it instead of waiting on it.
+Quality isn't a final step bolted on; it's structural. Every spec, plan, and diff passes through **fresh, independent, lensed hunters** that each enumerate the *whole* class of a problem — not a few instances — so a fix lands at the root in one pass instead of dragging through round after round. They loop until the verdict is CLEAN, and when an external automated reviewer (e.g. a PR bot) is in the loop, Scuba Stack front-runs it instead of waiting on it.
 
 ---
 
@@ -60,7 +60,7 @@ flowchart TD
 Depth stops at three levels — **you → chief of staff → manager → workers**. No manager of managers; no worker spawns a team. Breadth is capped not by ambition but by what the lead can health-check on each monitoring tick.
 
 - **Chief of staff** — the single session you talk to. Picks the dispatch depth (a direct worker for a contained task; an autonomous manager for a big chunk), keeps a re-arming health poll on everything running, and brings you decisions one at a time. Stays free.
-- **Team manager** — owns one chunk end-to-end: triages, decomposes, spawns up to two build workers, runs the review loop, monitors its own workers, reports up. Never talks to you directly; reports to the chief of staff.
+- **Team manager** — owns one chunk end-to-end: grooms the epic into slices, drives them to merge in parallel (one writer per branch) onto an integration branch, runs the review loop, monitors its own workers, reports up. Never talks to you directly; reports to the chief of staff.
 - **Workers** — the ephemeral agents that do the actual work and then terminate.
 
 ### The lifecycle
@@ -70,13 +70,15 @@ flowchart LR
     intake[intake<br/>draft mandate → grill you] --> spec[spec]
     spec --> plan[plan]
     plan --> build[build]
-    build --> ship[ship-gate<br/>PR + reviewer swarm]
+    build --> ship[ship-gate<br/>PR + hunter swarm]
     spec -. adversarial-review .-> spec
     plan -. adversarial-review .-> plan
     build -. adversarial-review .-> build
 ```
 
-Every substantive chunk moves **intake → spec → plan → build → ship**, with `adversarial-review` gating each spec/plan/code gate until CLEAN, and `process-health-monitor` running the whole time anything is in flight. You give go/no-go at spec and plan; you are the only one who merges to main.
+Every substantive chunk moves **intake → spec → plan → build → ship**, with `adversarial-review` gating each spec/plan/code gate until CLEAN, and `process-health-monitor` running the whole time anything is in flight. You give go/no-go at spec and plan; agents merge cleared stories onto their integration branch, but you alone merge to main.
+
+**Big work ships in small slices.** Batching an epic into one long-lived PR never converges — every fix-push draws another review round. So a manager has a `groomer` cut the epic into small, independently-shippable slices (per `sequence-verifiable-units`); each slice runs the lifecycle above on its own branch and clears — many in parallel, one writer per branch — onto the epic's **integration branch**. Agents merge cleared slices there; the assembled integration branch is the single PR that reaches you.
 
 ---
 
@@ -93,8 +95,8 @@ A skill is a folder with a `SKILL.md`. Its `description` is always in context (i
 | [`chief-of-staff`](skills/chief-of-staff/SKILL.md) | Operating manual for the top-level orchestrator you talk to |
 | [`team-manager`](skills/team-manager/SKILL.md) | Operating manual for a manager that owns a chunk end-to-end |
 | [`intake`](skills/intake/SKILL.md) | Turn a raw ask into a dispatchable mandate before any work starts |
-| [`adversarial-review`](skills/adversarial-review/SKILL.md) | Gate work with fresh, independent, lensed reviewers until CLEAN |
-| [`ship-gate`](skills/ship-gate/SKILL.md) | Open the PR, run a reviewer swarm in parallel, reconcile, fix at the root |
+| [`adversarial-review`](skills/adversarial-review/SKILL.md) | Gate work with fresh, independent, lensed hunters until CLEAN |
+| [`ship-gate`](skills/ship-gate/SKILL.md) | Open the PR, run a hunter swarm in parallel, reconcile, fix at the root |
 | [`process-health-monitor`](skills/process-health-monitor/SKILL.md) | Keep delegated background work alive; detect stalls and deaths |
 | [`roadmap`](skills/roadmap/SKILL.md) | The state-of-the-world tree the chief of staff keeps current and recovers from |
 | [`arena`](skills/arena/SKILL.md) | Race several independent attempts at a genuinely uncertain design |
@@ -102,7 +104,7 @@ A skill is a folder with a `SKILL.md`. Its `description` is always in context (i
 
 **Engineering-principle skills — the "how to think" library the org references:**
 
-`integrate-dont-bolt-on` · `boundary-discipline` · `foundational-thinking` · `experience-first` · `type-system-discipline` · `minimize-reader-load` · `laziness-protocol` · `subtract-before-you-add` · `exhaust-the-design-space` · `redesign-from-first-principles` · `build-the-lever` · `outcome-oriented-execution` · `make-operations-idempotent` · `migrate-callers-then-delete-legacy-apis` · `separate-before-serializing-shared-state`
+`integrate-dont-bolt-on` · `boundary-discipline` · `foundational-thinking` · `experience-first` · `type-system-discipline` · `minimize-reader-load` · `laziness-protocol` · `subtract-before-you-add` · `sequence-verifiable-units` · `exhaust-the-design-space` · `redesign-from-first-principles` · `build-the-lever` · `outcome-oriented-execution` · `make-operations-idempotent` · `migrate-callers-then-delete-legacy-apis` · `separate-before-serializing-shared-state`
 
 ### Agents (`agents/`)
 
@@ -111,7 +113,8 @@ Each agent is a single `.md` file defining a subagent type, with its model pinne
 | Agent | Model | Role |
 |---|---|---|
 | [`architect`](agents/architect.md) | Opus | Designs the spec and plan; never builds |
-| [`reviewer`](agents/reviewer.md) | Opus | Read-only, one assigned lens, returns CLEAN-or-findings |
+| [`groomer`](agents/groomer.md) | Opus | Cuts an epic into small, independently-shippable slices; never designs or builds |
+| [`hunter`](agents/hunter.md) | Opus | Fresh adversarial finder; runs the touched tests, enumerates the whole class, returns CLEAN-or-findings, never fixes |
 | [`intake-drafter`](agents/intake-drafter.md) | Opus | Drafts the mandate the chief of staff grills you against |
 | [`senior-implementer`](agents/senior-implementer.md) | Opus | Builds planned implementation against an approved plan |
 | [`bug-fixer`](agents/bug-fixer.md) | Opus | Solves bugs & reconciles review/PR findings holistically — reproduce, root-cause, repair the system (not just the test) |
@@ -121,7 +124,7 @@ Each agent is a single `.md` file defining a subagent type, with its model pinne
 
 ### The model split (load-bearing)
 
-Everything that exercises judgment or writes code runs on **Opus**: the chief of staff, the managers, `architect`, `reviewer`, `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Only the genuinely low-judgment support roles run on **Sonnet** — `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). The split exists because writing a fix or reconciling review findings is judgment, not typing; the gain from a cheaper tier there isn't worth a tunnel-visioned, bolt-on repair. Worker models are pinned in their files; the chief of staff and managers are **not** pinned — they inherit the session model — so **always start the lead session on Opus**, or the whole judgment layer silently downgrades with it.
+Everything that exercises judgment or writes code runs on **Opus**: the chief of staff, the managers, `architect`, `groomer`, `hunter`, `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Only the genuinely low-judgment support roles run on **Sonnet** — `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). The split exists because writing a fix or reconciling review findings is judgment, not typing; the gain from a cheaper tier there isn't worth a tunnel-visioned, bolt-on repair. Worker models are pinned in their files; the chief of staff and managers are **not** pinned — they inherit the session model — so **always start the lead session on Opus**, or the whole judgment layer silently downgrades with it.
 
 ---
 
@@ -178,7 +181,7 @@ Scuba Stack stands on two projects and contributes its own orchestration model:
 
 - **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent (MIT) — which pioneered disciplined, aggressively-triggered skills for Claude Code and the convention of skills as on-demand, description-routed Markdown.
 - **[pstack](https://github.com/cursor/plugins/tree/main/pstack)** by Lauren Tan (poteto), MIT — the deepest influence. Scuba Stack draws on pstack's engineering-principle vocabulary (`laziness-protocol`, `foundational-thinking`, `boundary-discipline`, and ~14 more), its parallelize-with-confidence and *never-block-on-the-human* ideas (which Scuba Stack reframes as "never block the executive"), and its evidence-driven, root-cause bug-fixing doctrine — the foundation the `bug-fixer` agent is built on.
-- **Scuba Stack's own contribution:** the **orchestration model** — a standing chief-of-staff → manager → worker org with `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, the `roadmap`, and a durable shared control plane, in which the executive layer only ever *dispatches* and therefore never blocks. (pstack reaches quality through `poteto-mode` and playbooks; Scuba Stack reaches it through a persistent org.)
+- **Scuba Stack's own contribution:** the **orchestration model** — a standing chief-of-staff → manager → worker org with `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, the `roadmap`, slice-and-integration-branch shipping (`sequence-verifiable-units`), and a durable shared control plane, in which the executive layer only ever *dispatches* and therefore never blocks. (pstack reaches quality through `poteto-mode` and playbooks; Scuba Stack reaches it through a persistent org.)
 
 Scuba Stack is **independently written** — it reuses none of those projects' prose. (Verified by deterministic 8-gram scan against the superpowers corpus, the `cursor/plugins` repo including pstack, and every other locally installed skill: the only shared word-sequences are the engineering-principle skill *names* themselves — shared vocabulary, not copied text — which the credit above acknowledges.) The credit is for inspiration and vocabulary, not for copied material.
 

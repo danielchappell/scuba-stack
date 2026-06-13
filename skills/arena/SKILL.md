@@ -14,7 +14,7 @@ Use arena only when the shape is honestly uncertain and a wrong choice is costly
 ## How it runs
 
 1. Give the same mandate to a small number of independent candidates (two or three), each in its own isolated worktree so they don't collide. Don't let them see each other's work; independence is the point.
-2. Evaluate all candidates against one explicit bar (the definition of done plus the qualities you care about), ideally through a fresh reviewer so the judging is lensed and honest, not just a vibe.
+2. Evaluate all candidates against one explicit bar (the definition of done plus the qualities you care about), ideally through a fresh `hunter` so the judging is lensed and honest, not just a vibe.
 3. Pick a base: the candidate with the soundest overall shape, not necessarily the most complete.
 4. Fold the best pieces of the runners-up into that base. Take the single strongest idea from each rather than blending them into mush.
 

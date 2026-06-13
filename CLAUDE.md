@@ -40,14 +40,15 @@ The system is a layered org. Understanding it requires reading `global-CLAUDE.md
 ### Two families of skills
 
 - **Orchestration / role skills** — the operating system: `chief-of-staff`, `team-manager`, `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, `roadmap`, `arena`, `html-executive-brief`.
-- **Engineering-principle skills** — the "how to think" library the discipline references: `integrate-dont-bolt-on`, `boundary-discipline`, `foundational-thinking`, `experience-first`, `type-system-discipline`, `minimize-reader-load`, `laziness-protocol`, `subtract-before-you-add`, `exhaust-the-design-space`, `redesign-from-first-principles`, `build-the-lever`, `outcome-oriented-execution`, `make-operations-idempotent`, `migrate-callers-then-delete-legacy-apis`, `separate-before-serializing-shared-state`.
+- **Engineering-principle skills** — the "how to think" library the discipline references: `integrate-dont-bolt-on`, `boundary-discipline`, `foundational-thinking`, `experience-first`, `type-system-discipline`, `minimize-reader-load`, `laziness-protocol`, `subtract-before-you-add`, `sequence-verifiable-units`, `exhaust-the-design-space`, `redesign-from-first-principles`, `build-the-lever`, `outcome-oriented-execution`, `make-operations-idempotent`, `migrate-callers-then-delete-legacy-apis`, `separate-before-serializing-shared-state`.
 
 ### The agents (worker pool, `agents/`)
 
 Each is a subagent type with `name`, `description`, `tools`, and a pinned `model`:
 
 - `architect` (opus) — designs spec/plan; does not build.
-- `reviewer` (opus) — read-only (holds Bash/web for diff and doc inspection), one assigned lens, returns CLEAN-or-findings.
+- `groomer` (opus) — cuts an epic into small, independently-shippable slices (per `sequence-verifiable-units`); does not design or build.
+- `hunter` (opus) — fresh independent adversarial finder; runs the touched tests in its own worktree (not read-only), enumerates the whole class with its shared root, returns CLEAN-or-findings, never fixes.
 - `intake-drafter` (opus) — drafts the mandate the chief of staff grills against.
 - `senior-implementer` (opus) — builds planned implementation against an approved plan.
 - `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); resolves its own external threads.
@@ -57,7 +58,7 @@ Each is a subagent type with `name`, `description`, `tools`, and a pinned `model
 
 ### Model split (a load-bearing invariant)
 
-Anything that judges or writes code runs on **Opus** — chief of staff, managers, `architect`, `reviewer`, `senior-implementer`, `bug-fixer`. Only the low-judgment support roles run on **Sonnet**: `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). Writing a fix or reconciling findings is judgment, not typing, so a cheaper tier there risks a tunnel-visioned bolt-on — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire judgment layer. Always start the lead session on Opus.
+Anything that judges or writes code runs on **Opus** — chief of staff, managers, `architect`, `groomer`, `hunter`, `senior-implementer`, `bug-fixer`. Only the low-judgment support roles run on **Sonnet**: `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). Writing a fix or reconciling findings is judgment, not typing, so a cheaper tier there risks a tunnel-visioned bolt-on — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire judgment layer. Always start the lead session on Opus.
 
 ## Conventions when editing
 
@@ -69,6 +70,6 @@ Anything that judges or writes code runs on **Opus** — chief of staff, manager
 
 ## Invariants (from `global-CLAUDE.md`, true everywhere)
 
-- The user is the sole decision-maker and the only one who merges to main. No agent merges.
+- The user is the sole decision-maker and the only one who merges to main. Agents may merge a cleared story into its epic's integration branch; the integration-branch→main merge is always the user's.
 - State lives in the shared `.scuba/` control plane (resume anchor `.scuba/roadmap.md`), not transcripts. Read it; don't re-read history.
 - Verify state from git and files before asserting it. A dispatch is an open loop until confirmed closed.

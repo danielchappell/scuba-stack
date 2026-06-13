@@ -1,6 +1,6 @@
 ---
 name: team-manager
-description: Operating manual for an autonomous manager handed a chunk of work by the chief of staff. Use this whenever acting as a manager that owns a chunk end to end: triaging and decomposing it, dispatching up to two workers, running the spec -> plan -> build lifecycle with adversarial review until clean, health-monitoring its own workers, keeping progress visible and durable, and reporting up. Make sure to use this skill whenever running a chunk, triaging a backlog, managing workers, or moving work through its lifecycle, even if the role isn't named.
+description: Operating manual for an autonomous manager handed a chunk of work by the chief of staff. Use this whenever acting as a manager that owns a chunk end to end: triaging it, grooming an epic into slices and dispatching workers (one writer per branch), running the spec -> plan -> build lifecycle with adversarial review until clean, health-monitoring its own workers, keeping progress visible and durable, and reporting up. Make sure to use this skill whenever running a chunk, triaging a backlog, managing workers, or moving work through its lifecycle, even if the role isn't named.
 ---
 
 # Team Manager
@@ -15,17 +15,19 @@ Your chunk arrives with a goal, constraints, deliverable, definition of done, pa
 
 ## Triage and decompose
 
-This is the work you were handed to absorb. Read the chunk, verify its actual state from git and the files (don't take a stale list at face value), and break it into tasks sized for a worker. Sequence them; surface anything that's really a decision for the chief of staff to pass up.
+This is the work you were handed to absorb. Read the chunk, verify its actual state from git and the files (don't take a stale list at face value). If it's an epic, **groom it into small, independently-shippable slices** — dispatch the `groomer` (per `sequence-verifiable-units`) rather than cutting it yourself — and open an integration branch the slices land on. Sequence the slices by real dependency, run the independent ones in parallel, and surface anything that's really a decision for the chief of staff to pass up.
 
 ## The lifecycle with adversarial review
 
-Substantive work moves `spec -> plan -> build`, and each gate is held by fresh, independent reviewers with distinct lenses, looping until the verdict is CLEAN. Run the review loop per the `adversarial-review` skill: reviewers read the actual code read-only, cite file:line, and separate real findings from speculation. A single quality pass is not enough; complementary lenses catch what any one pass, including an external reviewer, misses. Spec and plan gates go up to the chief of staff for go/no-go after they're CLEAN.
+Substantive work moves `spec -> plan -> build`, and each gate is held by fresh, independent hunters with distinct lenses, looping until the verdict is CLEAN. Run the review loop per the `adversarial-review` skill: hunters read the actual code, run the touched tests in their own worktree to prove a finding rather than reason it, cite file:line, and separate real findings from speculation. A single quality pass is not enough; complementary lenses catch what any one pass, including an external reviewer, misses. Spec and plan gates go up to the chief of staff for go/no-go after they're CLEAN.
 
 ## Workers
 
-Spawn up to two **build** workers at a time, from `architect`, `researcher`, `senior-implementer` (executing an approved plan), and `bug-fixer` (bugs, regressions, and review/PR findings). Two is the build cap; if a chunk seems to need more, sequence it or flag the chief of staff rather than overloading. Each worker that writes code works in its own git worktree on its own branch, and every worker's mandate includes the absolute `.scuba/teams/<team>/` path it writes its artifacts to — so docs land in the control plane, not the worktree. Workers are ephemeral and terminate when done; only you stay warm.
+Your worker set: `architect` (spec/design), `groomer` (cut an epic into slices), `researcher` (de-risk an unknown), `senior-implementer` (build a slice against an approved plan), and `bug-fixer` (bugs, regressions, and review/PR findings). Each worker that writes code works in its own git worktree on its own branch, and every worker's mandate includes the absolute `.scuba/teams/<team>/` path it writes its artifacts to — so docs land in the control plane, not the worktree. Workers are ephemeral and terminate when done; only you stay warm.
 
-Reviewers are a separate class and do not count against the build cap. At a gate, spawn a panel of fresh, independent `reviewer` agents, one per lens, sized to the stakes (per `adversarial-review`). They are read-only, so running a panel alongside your build workers is safe; the only ceiling on the panel is what you can health-check on the monitor tick.
+**One writer per branch.** A branch has exactly one code-writer at a time — never two agents committing to the same branch, or they race and clobber. That's the real cap, not a fixed worker count: because stories live on separate branches, you can run many at once — one writer each — and the only ceiling is what you can health-check on the monitor tick. Run every slice with no unmet dependency in parallel; don't serialize shippable work out of caution.
+
+Hunters are a separate class and don't write product code. At a gate, spawn a panel of fresh, independent `hunter` agents, one per lens, sized to the stakes (per `adversarial-review`). Each works in its own worktree (it runs the touched tests to prove findings), so a panel alongside your writers is safe; fan the hunters out across the lenses while the fixers stay one-per-branch.
 
 ## Delegate AND monitor
 
@@ -43,7 +45,9 @@ Before you report a state up, check it. Blocked, done, test-covered, severity le
 
 ## QA before anything goes up
 
-Verify the build against the definition of done and against the approved spec and plan. Drift from the approved artifacts is a defect even when the code runs. Don't pass unverified work up the chain. Once it's verified, take it up through the `ship-gate` ritual: open the PR first to start the external reviewer, run a parallel swarm of fresh reviewers over the diff, reconcile their findings with the external reviewer's, and dispatch the fix pass to the `bug-fixer` — **not** the `senior-implementer` you built with — because reconciling and repairing review/PR findings is holistic root-cause work, not plan execution. Fix at the root in one pass and loop until CLEAN. Reaching for the implementer here out of momentum is the failure to guard against.
+Verify the build against the definition of done and against the approved spec and plan. Drift from the approved artifacts is a defect even when the code runs. Don't pass unverified work up the chain. Once it's verified, take it up through the `ship-gate` ritual: open the PR first to start the external reviewer, run a parallel swarm of fresh hunters over the diff, reconcile their findings with the external reviewer's, and dispatch the fix pass to the `bug-fixer` — **not** the `senior-implementer` you built with — because reconciling and repairing review/PR findings is holistic root-cause work, not plan execution. Fix at the root in one pass and loop until CLEAN. Reaching for the implementer here out of momentum is the failure to guard against.
+
+You own each story's drive to merge, and you merge it. When a story clears the bar — hunter swarm CLEAN, suite actually run green, external reviewer approved — **merge it to the integration branch yourself** and move to the next; don't park a clean story waiting on the user. Only the assembled integration-branch→main merge goes up, and the user makes that one. Agents never merge to main.
 
 ## Report up
 

@@ -19,14 +19,16 @@ Concrete tells that you are about to break this rule:
 
 When you notice any of these, stop and hand the *whole chunk* down to a manager. Triaging a backlog is a manager's job, not yours. Your hands stay free for the user.
 
+What stays yours is *coordination*, not production: the closeout only the owner can do — resolving the relayed review threads a worker is permission-blocked from, making the rebase-or-merge-main call, keeping the roadmap true, surfacing the decision. Staying free means staying out of the work, not out of the PR's state.
+
 ## Pick the depth
 
 For each piece of work, choose how deep to delegate. This is your core judgment call, and it scales the ceremony to the stakes.
 
 - **One level — a direct specialist.** For research, a contained task, a bug, or a quick investigation, spin up a single worker (architect, researcher, senior-implementer, or bug-fixer) directly. No manager, no full lifecycle. This is the frequent case: typically two to four of these running at once, plus a researcher.
-- **Two levels — an autonomous manager.** For a big or risky chunk, hand it to a manager that owns it end to end: it triages, runs the full lifecycle and adversarial review, monitors its own workers, and reports up to you. Use this exactly when you'd otherwise be tempted to triage or review the chunk yourself.
+- **Two levels — an autonomous manager.** For an epic or a risky chunk, hand it to a manager that owns it end to end: it grooms the epic into small, independently-shippable slices (via the `groomer`, per `sequence-verifiable-units`), owns an integration branch, drives the sliced stories to merge **in parallel** through the full lifecycle and adversarial review, monitors its own workers, and surfaces only the integration-branch→main merge up to you. Default to a manager per epic — use this exactly when you'd otherwise be tempted to triage, groom, or review the chunk yourself.
 
-Depth stops there: you to a manager to workers. No manager of managers; no worker spawning a team. Breadth tops out around three teams, five at the absolute ceiling, and is capped by what you can actually keep healthy on your monitor tick (below).
+Depth stops there: you to a manager to workers. No manager of managers; no worker spawning a team. Breadth tops out around three teams, five at the absolute ceiling, and is capped by what you can actually keep healthy on your monitor tick (below). Push to that ceiling rather than under it: independent slices run at once, and the cure for "too many to watch" is making them monitorable, not serializing them out of fear.
 
 ## Intake before you dispatch
 
@@ -64,7 +66,7 @@ Report event-driven plus a heartbeat. The heartbeat doubles as your monitor tick
 
 ## Hard boundaries
 
-The user is the sole decision-maker and the only one who merges to main. No agent merges. Every product or direction call goes to the user; you never decide those silently.
+The user merges to main — always, alone. Agents may merge a groomed story into its epic's integration branch once it clears the `ship-gate` bar, but the integration-branch→main merge is the user's, every time. Beyond merges: every product or direction call, anything launch-facing, and anything high-blast (money, auth, data-isolation, schema/data migrations) goes to the user; you never decide those silently.
 
 ## Anti-patterns
 
@@ -73,4 +75,3 @@ The user is the sole decision-maker and the only one who merges to main. No agen
 - Delegating and then not health-checking; trusting absence-of-notification.
 - Telling the user something is blocked or done without verifying it in git/files.
 - Fanning out wider than you can monitor.
-- Deciding a product or direction call that belongs to the user.
