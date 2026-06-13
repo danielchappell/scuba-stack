@@ -1,6 +1,6 @@
 ---
 name: roadmap
-description: The single state-of-the-world document the chief of staff keeps current and reads first on every resume — a stage-tagged tree of every in-flight thread with the branch, worktree, artifacts, and last-known state needed to recover it. Use when initializing or updating orchestration state, on every monitor tick, and to recover after a lost session. The roadmap is the resume anchor; the per-team files are the detail. Make sure to keep it current as work moves, delegating the typing to a scribe rather than blocking on it.
+description: The single state-of-the-world document the chief of staff keeps current and reads first on every resume — a Mermaid stage-tagged tree of every in-flight thread, linking to the artifacts and per-thread status each one needs to recover. Use when initializing or updating orchestration state, on every monitor tick, and to recover after a lost session. The roadmap is the resume anchor; the per-team files are the detail. Make sure to keep it current as work moves, delegating the typing to a scribe rather than blocking on it.
 ---
 
 # Roadmap
@@ -13,16 +13,13 @@ Orchestration state has to be visible to the human on their own branch and to a 
 
 ## The document
 
-`.scuba/roadmap.md` is the tree. Start from the bundled `template.md`; don't redesign it. Children nest under parents so the dependency tree is visible, and every node carries what recovery needs:
+`.scuba/roadmap.md` has three sections, always in this order — start from the bundled `template.md`, see `example.md` for a filled one, and don't redesign the shape:
 
-- **goal** — one line, the outcome.
-- **stage** — 🟡 spec · 🔵 plan · ⛔ blocked · 🟢 execution · 🔎 review · ✅ done · 💤 parked.
-- **owner** — the manager or worker on it.
-- **branch + worktree** — where the code lives.
-- **artifacts** — links into `.scuba/teams/<team>/` (spec, plan, status, decisions) and `.scuba/briefs/`.
-- **left off at** — last commit SHA, the next step, and any blocker.
+- **Now active** — one or two lines per currently-moving thread: what's happening *right now*, each linking to its `status.md`. The human's at-a-glance status report.
+- **Decisions waiting on me** — pinned near the top; every open call that needs the user, one line each with a context link. Never bury a decision in the tree.
+- **Roadmap** — a **Mermaid `flowchart`** tree (renders as a real diagram on GitHub and in any mermaid-aware preview; no legend — the stage emoji in the labels are self-evident). Each node is a thread, labelled with its stage emoji and coloured by stage from the fixed `classDef` set (don't invent colours). Each node `click`s through to its current artifact, and the artifacts chain forward — **spec → plan → executive brief**: the roadmap links to the spec, the spec to its plan, a finished thread to its brief.
 
-Decisions waiting on the user sit in their own section at the top; never bury them in the tree. Keep it scannable — the human reads this instead of asking you, so optimize for their glance, not your convenience.
+**The roadmap is the index, not the detail.** The per-thread recovery fields — branch, worktree, last commit SHA, next step, blocker — live in each thread's `teams/<team>/<thread>.status.md`, so the tree stays scannable while recovery still has every field it needs. Keep it for the human's glance: they read this instead of asking you.
 
 ## The chief of staff owns it; never blocks on it
 
@@ -32,7 +29,7 @@ The chief of staff keeps the roadmap current as part of the monitor tick it alre
 
 The live `.scuba/` survives a crash, an API outage, or an archived conversation because it's a real directory in the primary tree. To survive losing the machine, it is mirrored to a **per-user state branch** — `scuba-state/<git-user-slug>` (slugged from `git config user.email`, so distinct users on a shared clone don't clobber each other's state) — an orphan branch holding only `.scuba/`, maintained through a side worktree. The **chief of staff dispatches a `scribe` to push this mirror every heartbeat**, so the off-machine copy is never more than one tick stale; that recurring push is the chief of staff's cadence to own, not something the ephemeral scribe schedules itself.
 
-Recovery is a **re-dispatch, not a reconnect** — a killed worker can't be reattached. Fetch, restore `.scuba/` from the branch, read `roadmap.md`, and for each non-terminal thread: verify its worktree still exists and its branch head matches the recorded last SHA, then spawn a *fresh* worker in the node's role with a mandate built from the node's goal, `next` step, and worktree path. (This is why `next` is mandatory on every node.) The exact git recipe is operator mechanics — see the repo's `RUNBOOK`/`CLAUDE.md`.
+Recovery is a **re-dispatch, not a reconnect** — a killed worker can't be reattached. Fetch, restore `.scuba/` from the branch, read `roadmap.md`, and for each non-terminal thread: verify its worktree still exists and its branch head matches the recorded last SHA, then spawn a *fresh* worker in that thread's role with a mandate built from its `status.md` — goal, `next` step, worktree. (This is why every thread's status keeps a current `next`.) The exact git recipe is operator mechanics — see the repo's `RUNBOOK`/`CLAUDE.md`.
 
 ## On first use
 

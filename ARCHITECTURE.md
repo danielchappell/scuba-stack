@@ -46,7 +46,7 @@ You give go/no-go at spec and plan. You are the only one who merges to main — 
 
 Transcript memory is unreliable across compaction and resumes, so Scuba Stack never depends on it. And because workers build in isolated git worktrees, state can't live with the code or it scatters across branches no one checks out. So state lives in **one shared `.scuba/` control plane in the primary working tree** — visible to the human on their own branch, and to a fresh chief of staff with no history. Every agent writes its orchestration artifacts there by absolute path; only code goes in the worktrees. (This is `separate-before-serializing-shared-state` applied to the org itself.)
 
-- **`roadmap.md`** — the resume anchor: a stage-tagged tree of every thread with the branch, worktree, artifacts, and last-known state needed to recover it. The chief of staff reads it first and keeps it current on its monitor tick, delegating heavy reconciliation to a `scribe` so it never blocks (the `roadmap` skill is the format and discipline).
+- **`roadmap.md`** — the resume anchor: a **Mermaid** stage-tagged tree indexing every thread, plus a "now active" digest and the decisions waiting on the user. Each node links to its artifacts (which chain spec → plan → brief); the per-thread recovery detail — branch, worktree, last SHA, next step, blocker — lives in its `teams/<team>/status.md`, so the tree stays scannable. The chief of staff reads it first and keeps it current on its monitor tick, delegating heavy reconciliation to a `scribe` so it never blocks (the `roadmap` skill is the format and discipline).
 - **`teams/<team>/`** — per-manager working state (`status.md`, `spec.md`, `plan.md`, `decisions.md`).
 - **`briefs/`** — rendered milestone briefs.
 

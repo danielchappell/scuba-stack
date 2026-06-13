@@ -132,12 +132,12 @@ Scuba Stack never relies on transcript memory — and because workers build in i
 ```
 your-repo/
   .scuba/                # the control plane — gitignored, visible on your branch, not in any worktree
-    roadmap.md           # the resume anchor: a stage-tagged tree of every thread
+    roadmap.md           # resume anchor: a Mermaid tree of every thread; nodes link to spec/plan/brief
     teams/<team>/        # per-manager state: status, spec, plan, decisions
     briefs/              # rendered milestone briefs
 ```
 
-`roadmap.md` is the source of truth: every in-flight thread, its stage, its branch and worktree, its artifacts, and where it left off. The chief of staff reads it first and keeps it current on its monitor tick — delegating to a `scribe` rather than blocking. For recovery beyond the local disk, the control plane is mirrored to a per-user branch `scuba-state/<you>` (namespaced by your git email, so distinct users don't clobber each other's state) and pushed every heartbeat — so after a crash, an API outage, or an archived conversation, you fetch, restore `.scuba/`, and pick every agent back up where it left off.
+`roadmap.md` is the source of truth: a Mermaid tree of every in-flight thread and its stage, a "now active" digest, and the decisions waiting on you. Each node links to its artifacts (spec → plan → executive brief); the per-thread recovery detail — branch, worktree, last SHA, next step — lives in its `status.md`. The chief of staff reads it first and keeps it current on its monitor tick — delegating to a `scribe` rather than blocking. For recovery beyond the local disk, the control plane is mirrored to a per-user branch `scuba-state/<you>` (namespaced by your git email, so distinct users don't clobber each other's state) and pushed every heartbeat — so after a crash, an API outage, or an archived conversation, you fetch, restore `.scuba/`, and pick every agent back up where it left off.
 
 ---
 

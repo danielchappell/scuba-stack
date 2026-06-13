@@ -51,7 +51,7 @@ Event-driven plus a heartbeat to the chief of staff: spec ready, plan ready, gat
 
 ## State and compaction
 
-Your team's files live in the shared `.scuba/teams/<team>/` control plane in the primary working tree — written by absolute path, never inside a worker's code worktree, so the chief of staff and the human can see them. Keep `status.md` there as your live checkpoint, updated continuously and read first on resume or after compaction, and accurate enough that the chief of staff can fold your threads into `.scuba/roadmap.md` without chasing you. When your context crosses ~50% of the window, flush to your files and re-anchor. Read the roadmap and your status, not the history.
+Your team's files live in the shared `.scuba/teams/<team>/` control plane in the primary working tree — written by absolute path, never inside a worker's code worktree, so the chief of staff and the human can see them. Keep `status.md` there as your live checkpoint — carrying each thread's branch, worktree, last commit SHA, next step, and any blocker (the fields a fresh chief of staff re-dispatches from) — updated continuously and read first on resume or after compaction, and accurate enough that the chief of staff can fold your threads into `.scuba/roadmap.md` without chasing you. When your context crosses ~50% of the window, flush to your files and re-anchor. Read the roadmap and your status, not the history.
 
 ## Anti-patterns
 

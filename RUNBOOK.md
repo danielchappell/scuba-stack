@@ -49,7 +49,7 @@ your-repo/              # per project — nothing required up front
 
 ## State, roadmap & recovery
 
-All orchestration state lives in one shared `.scuba/` control plane in your primary working tree — `roadmap.md` (the resume anchor), `teams/<team>/`, and `briefs/`. Every agent writes there by absolute path, so you see every spec, plan, and brief on your own branch without checking out a worktree, and the chief of staff keeps `roadmap.md` current on its monitor tick (delegating to a `scribe` when a reconciliation would block it).
+All orchestration state lives in one shared `.scuba/` control plane in your primary working tree — `roadmap.md` (the resume anchor), `teams/<team>/`, and `briefs/`. Every agent writes there by absolute path, so you see every spec, plan, and brief on your own branch without checking out a worktree, and the chief of staff keeps `roadmap.md` current on its monitor tick (delegating to a `scribe` when a reconciliation would block it). `roadmap.md`'s tree is a Mermaid diagram — view it on GitHub or in a mermaid-aware markdown preview (e.g. the free "Markdown Preview Mermaid Support" extension in VS Code/Cursor); a plain previewer shows it as code.
 
 `.scuba/` is gitignored — the chief of staff makes it self-ignoring on first use (a `.scuba/.gitignore` of `*`) — so it never pollutes your code commits, and it survives a crash, an API outage, or an archived conversation because it's a real directory on disk. To survive losing the machine — and so distinct users (by git email) don't clobber each other's state — it's mirrored to a **per-user** orphan branch, pushed every heartbeat by a scribe the chief of staff dispatches:
 
