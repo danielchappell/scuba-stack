@@ -38,17 +38,19 @@ Every substantive chunk moves **intake → spec → plan → build → ship**:
 
 - **`intake`** converts a raw, underspecified ask into a dispatchable mandate (goal, constraints, definition of done, scope, quality bar). It is draft-first: an `intake-drafter` writes a draft with its assumptions made loud, and the chief of staff grills you against it. This is the one gap the rest of the machinery cannot cover — spec/plan/build/review all check work *against the mandate*, never whether the mandate matched what you meant.
 - **`adversarial-review`** gates each spec, plan, and code gate. Reviewers are **fresh** (not the author, not carrying build context), **independent** (separate agents), and **lensed** (each with a distinct angle). They read the actual code read-only, cite `file:line`, and separate real findings from speculation. Every finding is classified REAL / DEFERRED / INVALID; the loop repeats until a confirming pass returns zero real findings (CLEAN). Fixes are non-vacuous (red → green → refactor) and test the invariant, not the patch.
-- **Front-running an external reviewer.** When a PR bot or similar is in the loop, Scuba Stack does not serialize against its latency. `ship-gate` opens the PR first (starting the bot's clock), runs an internal reviewer swarm over the diff *in parallel*, reconciles both streams into one deduped classified worklist, and fixes the root causes in a single pass. The internal reviewer is tuned to the bug *classes* the external one actually validates, so it catches them first.
+- **Front-running an external reviewer.** When a PR bot or similar is in the loop, Scuba Stack does not serialize against its latency. `ship-gate` opens the PR first (starting the bot's clock), runs an internal reviewer swarm over the diff *in parallel*, reconciles both streams into one deduped classified worklist, and hands it to the `bug-fixer` to repair the root causes in a single pass. The internal reviewer is tuned to the bug *classes* the external one actually validates, so it catches them first.
 
 You give go/no-go at spec and plan. You are the only one who merges to main — no agent merges.
 
-## State model — the board, not the transcript
+## State model — the control plane, not the transcript
 
-Transcript memory is unreliable across compaction and resumes, so Scuba Stack never depends on it. State lives in each project's `.scuba/` directory:
+Transcript memory is unreliable across compaction and resumes, so Scuba Stack never depends on it. And because workers build in isolated git worktrees, state can't live with the code or it scatters across branches no one checks out. So state lives in **one shared `.scuba/` control plane in the primary working tree** — visible to the human on their own branch, and to a fresh chief of staff with no history. Every agent writes its orchestration artifacts there by absolute path; only code goes in the worktrees. (This is `separate-before-serializing-shared-state` applied to the org itself.)
 
-- **`board.md`** — the single live checkpoint and resume anchor: every in-flight agent, branch, pending decision, and standing lesson, continuously updated and read first on resume or after compaction.
-- **`teams/<team>/`** — per-manager working state (e.g. `status.md`).
+- **`roadmap.md`** — the resume anchor: a stage-tagged tree of every thread with the branch, worktree, artifacts, and last-known state needed to recover it. The chief of staff reads it first and keeps it current on its monitor tick, delegating heavy reconciliation to a `scribe` so it never blocks (the `roadmap` skill is the format and discipline).
+- **`teams/<team>/`** — per-manager working state (`status.md`, `spec.md`, `plan.md`, `decisions.md`).
 - **`briefs/`** — rendered milestone briefs.
+
+For durability beyond the local disk, the control plane is mirrored to a per-user orphan branch `scuba-state/<git-user-slug>` (per git email, so distinct users don't collide), pushed every heartbeat by a scribe the chief of staff dispatches. Recovery is: fetch, restore `.scuba/`, read the roadmap, and re-attach to each thread by its branch and last SHA.
 
 Two disciplines fall out of this:
 
@@ -64,7 +66,7 @@ A killed or interrupted agent sends no completion message, so trusting silence i
 The split is a load-bearing invariant, and the line is *judgment*, not *who writes code*:
 
 - **Opus** — everything that judges or writes code: chief of staff, managers, `architect`, `reviewer`, `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Writing a fix or reconciling review/PR findings is judgment-heavy; a cheaper tier there buys a tunnel-visioned, bolt-on repair — the opposite of what `ship-gate` and `integrate-dont-bolt-on` exist for. The two code-writers therefore split by *posture*: the `senior-implementer` executes an approved plan (the plan is the contract), while the `bug-fixer` investigates and repairs holistically (no plan, just a symptom and a system).
-- **Sonnet** — the two genuinely low-judgment support roles: `researcher` (gathering) and `brief-specialist` (rendering from the board).
+- **Sonnet** — the genuinely low-judgment support roles: `researcher` (gathering), `brief-specialist` (rendering from the control plane), and `scribe` (keeping the roadmap current).
 
 Worker models are pinned in agent frontmatter. The chief of staff and managers are **deliberately not pinned**: they run as the launched session and its teammates, inheriting the session model. This is why you must **start the lead session on Opus** — launching on Sonnet silently downgrades the entire judgment layer.
 
@@ -73,7 +75,7 @@ Worker models are pinned in agent frontmatter. The chief of staff and managers a
 A skill is a folder with a `SKILL.md` whose frontmatter is just `name` + `description`.
 
 - **Lazy loading.** A skill's `description` is always in context — it is the routing/trigger text — but the body loads only when the skill fires. This is the mechanism that lets the system carry a large discipline without paying for all of it in every session.
-- **Two families.** *Orchestration / role skills* are the operating system (`chief-of-staff`, `team-manager`, `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, `arena`, `html-executive-brief`). *Engineering-principle skills* are the "how to think" library the org references when building (`integrate-dont-bolt-on`, `boundary-discipline`, and the rest).
+- **Two families.** *Orchestration / role skills* are the operating system (`chief-of-staff`, `team-manager`, `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, `roadmap`, `arena`, `html-executive-brief`). *Engineering-principle skills* are the "how to think" library the org references when building (`integrate-dont-bolt-on`, `boundary-discipline`, and the rest).
 - **Cross-references are by bare name.** Skills and agents reference each other by `name`. Those names are the contract: renaming one means updating every reference across `skills/`, `agents/`, and `global-CLAUDE.md`, then reinstalling.
 
 ## The always-on pointer is deliberately tiny
@@ -92,7 +94,7 @@ The surgical, append-only design is what makes the installer safe to drop into a
 
 ## Costs and limits
 
-- A three-team run costs several times a single session, and direct inter-agent messages bill per round trip. The board-first coordination rule is the main cost control.
+- A three-team run costs several times a single session, and direct inter-agent messages bill per round trip. The control-plane-first coordination rule is the main cost control.
 - Idle teammates gray out and self-terminate; a ~15-minute heartbeat keeps active managers warm.
 - It rides Claude Code's **experimental** Agent Teams feature, so behavior tracks that feature's evolution.
 

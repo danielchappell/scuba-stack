@@ -1,23 +1,23 @@
 ---
 name: html-executive-brief
-description: Produces the milestone executive brief that the chief of staff presents to the user. Use this whenever a milestone is reached and a brief is needed, or whenever the user or the chief of staff asks for an executive brief, a milestone report, or a product-and-architecture summary. The brief is a self-contained HTML document covering the work from two lenses, product and architecture, sourced from the orchestration board. Make sure to use this skill whenever rendering a milestone brief, and start from the bundled template rather than designing from scratch.
+description: Produces the milestone executive brief that the chief of staff presents to the user. Use this whenever a milestone is reached and a brief is needed, or whenever the user or the chief of staff asks for an executive brief, a milestone report, or a product-and-architecture summary. The brief is a self-contained HTML document covering the work from two lenses, product and architecture, sourced from the control plane. Make sure to use this skill whenever rendering a milestone brief, and start from the bundled template rather than designing from scratch.
 ---
 
 # HTML Executive Brief
 
 You render the document that lands on the user's desk at each milestone. It has one job: let a busy decision-maker grasp what was built and what it needs from them, at a glance and then in depth, from both a product and an architecture perspective.
 
-Always start from `template.html` in this skill folder. Clone its structure and design system; swap in real content from the board. Do not redesign it per brief, and do not invent a new layout. Consistency is the point: the user learns to read these fast because they always look the same.
+Always start from `template.html` in this skill folder. Clone its structure and design system; swap in real content from the control plane. Do not redesign it per brief, and do not invent a new layout. Consistency is the point: the user learns to read these fast because they always look the same.
 
-## Source everything from the board
+## Source everything from the control plane
 
 A brief is a compilation, not original work. Pull from:
 
-- `board.md` and the relevant `teams/<team>/status.md` for status and scope.
+- `roadmap.md` and the relevant `teams/<team>/status.md` for status and scope.
 - `teams/<team>/spec.md` and `plan.md` for what was intended.
 - `teams/<team>/decisions.md` for the calls already made and the ones still open.
 
-If a fact isn't on the board, don't fabricate it. Mark it as unknown or leave it out. The brief's credibility is that everything in it is traceable to the board.
+If a fact isn't on the control plane, don't fabricate it. Mark it as unknown or leave it out. The brief's credibility is that everything in it is traceable to the control plane.
 
 ## The two lenses are mandatory
 
@@ -34,7 +34,7 @@ The most valuable part of the brief is the "Needs your decision" block. Surface 
 
 ## The gate trail
 
-Mark the milestone's position in the spec -> plan -> build -> QA -> review lifecycle honestly: completed gates as done, the active gate as current, the rest as upcoming, with real dates where the board has them. This is the one piece of structure the user reads first to orient, so it must be accurate.
+Mark the milestone's position in the spec -> plan -> build -> QA -> review lifecycle honestly: completed gates as done, the active gate as current, the rest as upcoming, with real dates where the control plane has them. This is the one piece of structure the user reads first to orient, so it must be accurate.
 
 ## Fill points in the template
 
@@ -47,7 +47,7 @@ Write the finished brief to `.scuba/briefs/<milestone>.html` as a single self-co
 ## Anti-patterns
 
 - Designing a new layout instead of cloning the template.
-- Filling a lens with material the board doesn't support.
+- Filling a lens with material the control plane doesn't support.
 - Burying or omitting the decisions the milestone needs from the user.
 - A gate trail that doesn't match the real lifecycle state.
 - Marketing tone. This is an internal brief; be plain and specific, not promotional.

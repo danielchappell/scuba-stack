@@ -11,7 +11,7 @@ Do not grill the user cold. People are poor at producing requirements in a vacuu
 
 ## Stay free; delegate the drafting
 
-You own the conversation, not the drafting. Hand the user's ask and pointers to context (the repo, this repo's `CLAUDE.md`, the board) to an `intake-drafter` agent, which reads the context and writes a structured draft mandate (goal, assumptions, definition of done, forks with chosen defaults, scope and non-goals, open questions) to the board. It does the context-heavy work in its own window; you relay and present. This is the same split as the executive brief, where you present but the specialist renders. Your turn stays thin, so your context stays free for everything else in flight.
+You own the conversation, not the drafting. Hand the user's ask and pointers to context (the repo, this repo's `CLAUDE.md`, the control plane) to an `intake-drafter` agent, which reads the context and writes a structured draft mandate (goal, assumptions, definition of done, forks with chosen defaults, scope and non-goals, open questions) to the control plane. It does the context-heavy work in its own window; you relay and present. This is the same split as the executive brief, where you present but the specialist renders. Your turn stays thin, so your context stays free for everything else in flight.
 
 ## Scale the drafting to the stakes
 
@@ -31,4 +31,4 @@ Stop when the mandate is dispatchable: goal, constraints, definition of done, sc
 
 ## Hand off
 
-The finished mandate, on the board, is what seeds the work: a manager turns it into a spec for a big chunk, or a direct specialist takes it as the task for a one-level dispatch. Either way, write it to the board before you dispatch, per `chief-of-staff`.
+The finished mandate, on the control plane, is what seeds the work: a manager turns it into a spec for a big chunk, or a direct specialist takes it as the task for a one-level dispatch. Either way, write it to the control plane before you dispatch, per `chief-of-staff`.

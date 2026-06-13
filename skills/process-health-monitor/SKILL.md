@@ -21,6 +21,8 @@ For every tracked process:
 
 Judge liveness from these, never from the presence or absence of a message. A transcript line such as an interruption notice is the tell that an agent was killed rather than finished.
 
+Fold what each tick finds into `.scuba/roadmap.md` so the state of the world stays current (per the `roadmap` skill): that file, plus each thread's branch and last SHA, is what a fresh session recovers from after a crash or a lost conversation. When keeping it current would block you, hand the update to a `scribe` rather than letting the roadmap drift. The tick also pushes the durability mirror to the per-user state branch (via a `scribe`), so a crash never costs more than one tick of off-machine state.
+
 ## Every dispatch is an open loop
 
 A dispatch or a re-trigger is open until you have confirmed it closed. Track each as an explicit open watch. This includes external events that send no notification of their own (an outside reviewer, a CI run): poll them to closure too; don't assume they finished.

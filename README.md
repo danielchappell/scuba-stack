@@ -96,6 +96,7 @@ A skill is a folder with a `SKILL.md`. Its `description` is always in context (i
 | [`adversarial-review`](skills/adversarial-review/SKILL.md) | Gate work with fresh, independent, lensed reviewers until CLEAN |
 | [`ship-gate`](skills/ship-gate/SKILL.md) | Open the PR, run a reviewer swarm in parallel, reconcile, fix at the root |
 | [`process-health-monitor`](skills/process-health-monitor/SKILL.md) | Keep delegated background work alive; detect stalls and deaths |
+| [`roadmap`](skills/roadmap/SKILL.md) | The state-of-the-world tree the chief of staff keeps current and recovers from |
 | [`arena`](skills/arena/SKILL.md) | Race several independent attempts at a genuinely uncertain design |
 | [`html-executive-brief`](skills/html-executive-brief/SKILL.md) | Render the milestone brief the chief of staff presents to you |
 
@@ -115,27 +116,28 @@ Each agent is a single `.md` file defining a subagent type, with its model pinne
 | [`senior-implementer`](agents/senior-implementer.md) | Opus | Builds planned implementation against an approved plan |
 | [`bug-fixer`](agents/bug-fixer.md) | Opus | Solves bugs & reconciles review/PR findings holistically — reproduce, root-cause, repair the system (not just the test) |
 | [`researcher`](agents/researcher.md) | Sonnet | De-risks one specific unknown |
-| [`brief-specialist`](agents/brief-specialist.md) | Sonnet | Renders the milestone executive brief from the board |
+| [`brief-specialist`](agents/brief-specialist.md) | Sonnet | Renders the milestone executive brief from the control plane |
+| [`scribe`](agents/scribe.md) | Sonnet | Keeps the roadmap current so the chief of staff never blocks; runs the recovery mirror |
 
 ### The model split (load-bearing)
 
-Everything that exercises judgment or writes code runs on **Opus**: the chief of staff, the managers, `architect`, `reviewer`, `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Only the two genuinely low-judgment support roles run on **Sonnet** — `researcher` (gathering) and `brief-specialist` (rendering from the board). The split exists because writing a fix or reconciling review findings is judgment, not typing; the gain from a cheaper tier there isn't worth a tunnel-visioned, bolt-on repair. Worker models are pinned in their files; the chief of staff and managers are **not** pinned — they inherit the session model — so **always start the lead session on Opus**, or the whole judgment layer silently downgrades with it.
+Everything that exercises judgment or writes code runs on **Opus**: the chief of staff, the managers, `architect`, `reviewer`, `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Only the genuinely low-judgment support roles run on **Sonnet** — `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). The split exists because writing a fix or reconciling review findings is judgment, not typing; the gain from a cheaper tier there isn't worth a tunnel-visioned, bolt-on repair. Worker models are pinned in their files; the chief of staff and managers are **not** pinned — they inherit the session model — so **always start the lead session on Opus**, or the whole judgment layer silently downgrades with it.
 
 ---
 
-## State lives in the board, not the chat
+## State lives in the control plane, not the chat
 
-Scuba Stack never relies on transcript memory. Each project gets an `.scuba/` directory the chief of staff creates on first use:
+Scuba Stack never relies on transcript memory — and because workers build in isolated worktrees, state can't live with the code either. It lives in **one shared `.scuba/` control plane in your primary working tree**, which every agent writes to by absolute path (code goes in the worktrees; orchestration docs go here). So it's always visible on whatever branch you're on, and a fresh chief of staff recovers the whole world from it.
 
 ```
 your-repo/
-  .scuba/
-    board.md        # the single live checkpoint — the resume anchor
-    teams/          # per-manager working state
-    briefs/         # rendered milestone briefs
+  .scuba/                # the control plane — gitignored, visible on your branch, not in any worktree
+    roadmap.md           # the resume anchor: a stage-tagged tree of every thread
+    teams/<team>/        # per-manager state: status, spec, plan, decisions
+    briefs/              # rendered milestone briefs
 ```
 
-The board is the source of truth: every in-flight agent, branch, pending decision, and standing lesson. Agents read it first on resume or after compaction, and verify state from git and files before asserting it. This is what lets the system survive context limits and keep costs down.
+`roadmap.md` is the source of truth: every in-flight thread, its stage, its branch and worktree, its artifacts, and where it left off. The chief of staff reads it first and keeps it current on its monitor tick — delegating to a `scribe` rather than blocking. For recovery beyond the local disk, the control plane is mirrored to a per-user branch `scuba-state/<you>` (namespaced by your git email, so distinct users don't clobber each other's state) and pushed every heartbeat — so after a crash, an API outage, or an archived conversation, you fetch, restore `.scuba/`, and pick every agent back up where it left off.
 
 ---
 
@@ -166,7 +168,7 @@ To add a capability: drop in a `skills/<name>/SKILL.md` folder or an `agents/<na
 
 ## Status
 
-Experimental. It rides Claude Code's **experimental** Agent Teams feature and is built entirely from prompt discipline, so behavior varies with the model and the feature's evolution. A multi-team run costs several times a single session; the board-first coordination rule is what keeps that in check. Read [RUNBOOK.md](RUNBOOK.md#cost-and-behavior-notes) before running a wide fan-out.
+Experimental. It rides Claude Code's **experimental** Agent Teams feature and is built entirely from prompt discipline, so behavior varies with the model and the feature's evolution. A multi-team run costs several times a single session; the control-plane-first coordination rule is what keeps that in check. Read [RUNBOOK.md](RUNBOOK.md#cost-and-behavior-notes) before running a wide fan-out.
 
 ---
 
@@ -176,7 +178,7 @@ Scuba Stack stands on two projects and contributes its own orchestration model:
 
 - **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent (MIT) — which pioneered disciplined, aggressively-triggered skills for Claude Code and the convention of skills as on-demand, description-routed Markdown.
 - **[pstack](https://github.com/cursor/plugins/tree/main/pstack)** by Lauren Tan (poteto), MIT — the deepest influence. Scuba Stack draws on pstack's engineering-principle vocabulary (`laziness-protocol`, `foundational-thinking`, `boundary-discipline`, and ~14 more), its parallelize-with-confidence and *never-block-on-the-human* ideas (which Scuba Stack reframes as "never block the executive"), and its evidence-driven, root-cause bug-fixing doctrine — the foundation the `bug-fixer` agent is built on.
-- **Scuba Stack's own contribution:** the **orchestration model** — a standing chief-of-staff → manager → worker org with `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, and a durable board, in which the executive layer only ever *dispatches* and therefore never blocks. (pstack reaches quality through `poteto-mode` and playbooks; Scuba Stack reaches it through a persistent org.)
+- **Scuba Stack's own contribution:** the **orchestration model** — a standing chief-of-staff → manager → worker org with `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, the `roadmap`, and a durable shared control plane, in which the executive layer only ever *dispatches* and therefore never blocks. (pstack reaches quality through `poteto-mode` and playbooks; Scuba Stack reaches it through a persistent org.)
 
 Scuba Stack is **independently written** — it reuses none of those projects' prose. (Verified by deterministic 8-gram scan against the superpowers corpus, the `cursor/plugins` repo including pstack, and every other locally installed skill: the only shared word-sequences are the engineering-principle skill *names* themselves — shared vocabulary, not copied text — which the credit above acknowledges.) The credit is for inspiration and vocabulary, not for copied material.
 

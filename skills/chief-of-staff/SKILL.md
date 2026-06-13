@@ -34,7 +34,7 @@ Before dispatching anything substantive, turn the user's ask into a real mandate
 
 ## Delegate with a full mandate
 
-Every dispatch carries the full briefing so the agent never comes back for basics: goal, constraints, deliverable, definition of done, relevant paths, and the quality bar. Pass the quality bar down explicitly; it sets the standard the whole chain holds to. Write the mandate to the board, then dispatch.
+Every dispatch carries the full briefing so the agent never comes back for basics: goal, constraints, deliverable, definition of done, the **absolute `.scuba/teams/<team>/` path the agent must write its artifacts to** (so they land in the control plane, not the worker's worktree), the relevant code paths, and the quality bar. Pass the quality bar down explicitly; it sets the standard the whole chain holds to. Write the mandate to the control plane, then dispatch.
 
 ## Delegate AND monitor
 
@@ -56,11 +56,11 @@ Substantive chunks move `spec -> plan -> build` with a fresh, independent, lense
 
 ## State and compaction
 
-The board under `.scuba/` is the source of truth, not your transcript. On first use in a repo, initialize it if it's absent: create `.scuba/board.md`, `.scuba/teams/`, and `.scuba/briefs/`. This is a one-time, idempotent setup; if the board already exists, leave it and carry on. Keep a single live checkpoint (`board.md`) as the resume anchor: every in-flight agent, branch, pending decision, and standing lesson, continuously updated and read first on resume or after compaction. When your context crosses ~50% of the window, flush to the board and re-anchor. Workers return summaries; raw detail stays in their files. Terminate finished workers; keep only yourself and any active managers warm.
+The shared `.scuba/` control plane in the primary working tree is the source of truth, not your transcript — and `.scuba/roadmap.md` is its resume anchor. Read the roadmap **first** on every resume or after compaction, and keep it current per the `roadmap` skill: it is the state-of-the-world tree the user reads instead of asking you, and the thing a fresh chief of staff recovers everything from. On first use in a repo, initialize the control plane if absent — first make it self-ignoring (`.scuba/.gitignore` containing `*`, so it never lands in code commits), then `roadmap.md` from the template, plus `teams/` and `briefs/`; idempotent if it already exists. Keep it current as part of your monitor tick, not in a separate pass — and when a heavy reconciliation or the durability mirror would block you, hand it to a `scribe`: you own the roadmap's correctness, you don't have to do its typing. All orchestration artifacts live in this shared `.scuba/` (written by absolute path), never inside a worker's worktree, so they stay visible on the user's branch and survive a lost session. Workers return summaries; raw detail stays in their files. When your context crosses ~50% of the window, flush to the roadmap and re-anchor. Terminate finished workers; keep only yourself and any active managers warm.
 
 ## Reporting and briefs
 
-Report event-driven plus a heartbeat. The heartbeat doubles as your monitor tick and as the keep-warm pulse that stops an active manager from idling out. At each milestone, have the brief specialist render an executive brief (`html-executive-brief` skill) and present it yourself.
+Report event-driven plus a heartbeat. The heartbeat doubles as your monitor tick and as the keep-warm pulse that stops an active manager from idling out. **Every heartbeat, also dispatch a `scribe` to push the durability mirror** (the per-user `scuba-state/<slug>` branch, per the `roadmap` skill), so the off-machine recovery copy is never more than one tick stale — this push is unconditional, distinct from the heavy reconciliation you hand off only when it would otherwise block you. At each milestone, have the brief specialist render an executive brief (`html-executive-brief` skill) and present it yourself.
 
 ## Hard boundaries
 

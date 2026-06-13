@@ -1,6 +1,6 @@
 ---
 name: ship-gate
-description: The ritual for taking completed, verified work up for review. Use the moment a build is done and ready to go up: when finishing a chunk, opening or putting up a PR, or shipping a change. Open the PR first to start the external reviewer, then in parallel run a swarm of fresh independent Opus reviewers over the diff, reconcile their findings with the external reviewer's into one classified list, fix the root causes in a single holistic pass, and loop until CLEAN. Make sure to use this whenever work is finished and about to go up for review, so you find your own bugs instead of waiting on the PR queue.
+description: The ritual for taking completed, verified work up for review. Use the moment a build is done and ready to go up: when finishing a chunk, opening or putting up a PR, or shipping a change. Open the PR first to start the external reviewer, then in parallel run a swarm of fresh independent Opus reviewers over the diff, reconcile their findings with the external reviewer's into one classified list, dispatch the `bug-fixer` to repair the root causes in a single holistic pass, and loop until CLEAN. Make sure to use this whenever work is finished and about to go up for review, so you find your own bugs instead of waiting on the PR queue.
 ---
 
 # Ship Gate

@@ -34,12 +34,12 @@ The system is a layered org. Understanding it requires reading `global-CLAUDE.md
 - **`global-CLAUDE.md`** is the always-on pointer (installed as `~/.claude/scuba.md`, imported by one line). It is deliberately tiny because everything always-on costs context in *every* session. Detail lives in skills, which load on demand. **Keep this file short** — adding to it taxes every session; put detail in a skill instead.
 - **Skills load lazily**: a skill's `description` frontmatter is always in context (it's the routing/trigger text); the body loads only when the skill is invoked.
 - **Roles**, top to bottom: the **chief of staff** (the single session the user talks to; dispatches, never builds/triages/reviews itself) → **team managers** (own a chunk end-to-end, spawn workers, run the review loop) → **workers** (the agents in `agents/`).
-- **State** lives in each project's `.scuba/board.md` (the resume anchor), never in transcripts. Skills repeatedly enforce: read the board, verify state from git/files, don't re-read history.
+- **State** lives in the shared `.scuba/` control plane in the primary working tree, with `.scuba/roadmap.md` as the resume anchor — never in transcripts, and never inside a worker's worktree (so it stays visible on the human's branch). Skills repeatedly enforce: read the roadmap, verify state from git/files, don't re-read history.
 - **Lifecycle**: `intake` (draft mandate → grill user) → spec → plan → build, with `adversarial-review` gating every spec/plan/code gate → `ship-gate` for PR/review → milestones rendered via `html-executive-brief`. `process-health-monitor` runs whenever background agents are live.
 
 ### Two families of skills
 
-- **Orchestration / role skills** — the operating system: `chief-of-staff`, `team-manager`, `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, `arena`, `html-executive-brief`.
+- **Orchestration / role skills** — the operating system: `chief-of-staff`, `team-manager`, `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, `roadmap`, `arena`, `html-executive-brief`.
 - **Engineering-principle skills** — the "how to think" library the discipline references: `integrate-dont-bolt-on`, `boundary-discipline`, `foundational-thinking`, `experience-first`, `type-system-discipline`, `minimize-reader-load`, `laziness-protocol`, `subtract-before-you-add`, `exhaust-the-design-space`, `redesign-from-first-principles`, `build-the-lever`, `outcome-oriented-execution`, `make-operations-idempotent`, `migrate-callers-then-delete-legacy-apis`, `separate-before-serializing-shared-state`.
 
 ### The agents (worker pool, `agents/`)
@@ -52,11 +52,12 @@ Each is a subagent type with `name`, `description`, `tools`, and a pinned `model
 - `senior-implementer` (opus) — builds planned implementation against an approved plan.
 - `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); resolves its own external threads.
 - `researcher` (sonnet) — de-risks one specific unknown.
-- `brief-specialist` (sonnet) — renders the milestone brief from the board.
+- `brief-specialist` (sonnet) — renders the milestone brief from the control plane.
+- `scribe` (sonnet) — keeps `.scuba/roadmap.md` current so the chief of staff never blocks; reconciles status and runs the durability mirror; never writes code or decides.
 
 ### Model split (a load-bearing invariant)
 
-Anything that judges or writes code runs on **Opus** — chief of staff, managers, `architect`, `reviewer`, `senior-implementer`, `bug-fixer`. Only the two low-judgment support roles run on **Sonnet**: `researcher` (gathering) and `brief-specialist` (rendering). Writing a fix or reconciling findings is judgment, not typing, so a cheaper tier there risks a tunnel-visioned bolt-on — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire judgment layer. Always start the lead session on Opus.
+Anything that judges or writes code runs on **Opus** — chief of staff, managers, `architect`, `reviewer`, `senior-implementer`, `bug-fixer`. Only the low-judgment support roles run on **Sonnet**: `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). Writing a fix or reconciling findings is judgment, not typing, so a cheaper tier there risks a tunnel-visioned bolt-on — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire judgment layer. Always start the lead session on Opus.
 
 ## Conventions when editing
 
@@ -69,5 +70,5 @@ Anything that judges or writes code runs on **Opus** — chief of staff, manager
 ## Invariants (from `global-CLAUDE.md`, true everywhere)
 
 - The user is the sole decision-maker and the only one who merges to main. No agent merges.
-- State lives in `.scuba/board.md`, not transcripts. Read it; don't re-read history.
+- State lives in the shared `.scuba/` control plane (resume anchor `.scuba/roadmap.md`), not transcripts. Read it; don't re-read history.
 - Verify state from git and files before asserting it. A dispatch is an open loop until confirmed closed.

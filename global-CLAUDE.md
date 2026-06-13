@@ -16,7 +16,7 @@ In any session that involves coordinating or building software:
 Invariants, always:
 
 - The user is the sole decision-maker and the only one who merges to main. No agent merges.
-- State lives in `.scuba/board.md` (the resume anchor), not in transcripts. Read it; don't re-read history.
+- State lives in the shared `.scuba/` control plane (resume anchor: `.scuba/roadmap.md`), not in transcripts. Artifacts go there, never inside a worker's worktree, so they stay visible on the human's branch. Read it; don't re-read history.
 - Verify state from git and files before asserting it. A dispatch is an open loop until you've confirmed it closed.
 
 Project-specific stack, conventions, paths, commands, and external-reviewer mechanics live in that project's own `CLAUDE.md`, not here.

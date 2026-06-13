@@ -42,6 +42,10 @@ Skills and agents reference each other **by bare name** (e.g. `integrate-dont-bo
 
 `global-CLAUDE.md` is the only text loaded in every session, so every line costs context everywhere. Resist adding to it — put detail in a skill that loads on demand. A PR that grows the pointer needs to justify the per-session tax.
 
+## Migrations are events, not steady state
+
+Skills and agents describe the *current* world only. Never add a version-compat or fallback branch ("if the old `board.md` exists, convert it…") to a skill, an agent, or `global-CLAUDE.md` — that taxes every session forever and rots as versions pass. Steady-state init must be idempotent and version-agnostic ("create X if absent"), not a compat ladder. One-time migrations live in the installer (user scope) or a dated `INSTALL`/`RUNBOOK` upgrade note (per-project state); tag each with a removal condition and prune it once no one is on the old version.
+
 ## House style
 
 Write the way the engineering-principle skills preach. In particular:
