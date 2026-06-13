@@ -61,12 +61,12 @@ A killed or interrupted agent sends no completion message, so trusting silence i
 
 ## The model split
 
-The split is a load-bearing invariant:
+The split is a load-bearing invariant, and the line is *judgment*, not *who writes code*:
 
-- **Judgment layer → Opus:** chief of staff, managers, `architect`, `reviewer`.
-- **Execution layer → Sonnet:** `senior-implementer`, `researcher`, `brief-specialist` — escalating to Opus for a high-blast or unusually hard slice.
+- **Opus** — everything that judges or writes code: chief of staff, managers, `architect`, `reviewer`, `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Writing a fix or reconciling review/PR findings is judgment-heavy; a cheaper tier there buys a tunnel-visioned, bolt-on repair — the opposite of what `ship-gate` and `integrate-dont-bolt-on` exist for. The two code-writers therefore split by *posture*: the `senior-implementer` executes an approved plan (the plan is the contract), while the `bug-fixer` investigates and repairs holistically (no plan, just a symptom and a system).
+- **Sonnet** — the two genuinely low-judgment support roles: `researcher` (gathering) and `brief-specialist` (rendering from the board).
 
-Worker models are pinned in agent frontmatter, so they're automatic. The chief of staff and managers are **deliberately not pinned**: they run as the launched session and its teammates, inheriting the session model. This is why you must **start the lead session on Opus** — launching on Sonnet silently downgrades the entire judgment layer.
+Worker models are pinned in agent frontmatter. The chief of staff and managers are **deliberately not pinned**: they run as the launched session and its teammates, inheriting the session model. This is why you must **start the lead session on Opus** — launching on Sonnet silently downgrades the entire judgment layer.
 
 ## Skills — lazy, triggered, named
 

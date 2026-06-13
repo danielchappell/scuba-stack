@@ -10,7 +10,7 @@ A single quality pass misses things. The backbone of quality here is fresh, inde
 ## The loop
 
 1. Run reviewers that are **fresh** (not the author, not carrying the build context), **independent** (separate agents), and **lensed** (each with a distinct angle).
-2. Each reviewer verifies against the **actual code, read-only**, cites `file:line`, and separates real findings from speculation.
+2. Each reviewer verifies against the **actual code, read-only** — pulling the diff with `git` and grounding a finding in real docs (platform, security, library behavior) via web when the lens needs it — cites `file:line`, and separates real findings from speculation.
 3. Classify every finding REAL / DEFERRED / INVALID against the code. Don't blind-trust any reviewer, internal or external; some findings are stale or wrong.
 4. Revise, then re-review. Loop until a confirming pass returns zero real findings. That is CLEAN. A re-trigger is an open loop until that pass comes back, so track it.
 
@@ -20,7 +20,7 @@ Pick complementary lenses for the artifact. As a starting set:
 
 - **Spec** — isolation/security; correctness/conformance; model-soundness.
 - **Plan** — spec-fidelity and test discipline; security and TOCTOU; conformance and dependencies.
-- **Code / PR** — line-by-line over the diff including the fixer's own newly added code; security; conformance to the approved spec and plan; and whether the change is a holistic repair or a bolt-on. Flag patch-accretion as a defect: a fix that adds a condition while leaving the root cause, a growing conditional chain, a function lengthening with each fix, or the same area generating repeat bugs. A change that works but accretes is a finding, not a pass.
+- **Code / PR** — line-by-line over the diff including the fixer's own newly added code; security; deployment and network exposure (public vs private surfaces, open ports, secrets, infra/config); conformance to the approved spec and plan; and whether the change is a holistic repair or a bolt-on. Flag patch-accretion as a defect: a fix that adds a condition while leaving the root cause, a growing conditional chain, a function lengthening with each fix, or the same area generating repeat bugs. A change that works but accretes is a finding, not a pass.
 
 ## Front-run an external reviewer
 

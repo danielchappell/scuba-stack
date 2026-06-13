@@ -23,7 +23,7 @@ When you notice any of these, stop and hand the *whole chunk* down to a manager.
 
 For each piece of work, choose how deep to delegate. This is your core judgment call, and it scales the ceremony to the stakes.
 
-- **One level — a direct specialist.** For research, a contained task, or a quick investigation, spin up a single worker (architect, researcher, implementer) directly. No manager, no full lifecycle. This is the frequent case: typically two to four of these running at once, plus a researcher.
+- **One level — a direct specialist.** For research, a contained task, a bug, or a quick investigation, spin up a single worker (architect, researcher, senior-implementer, or bug-fixer) directly. No manager, no full lifecycle. This is the frequent case: typically two to four of these running at once, plus a researcher.
 - **Two levels — an autonomous manager.** For a big or risky chunk, hand it to a manager that owns it end to end: it triages, runs the full lifecycle and adversarial review, monitors its own workers, and reports up to you. Use this exactly when you'd otherwise be tempted to triage or review the chunk yourself.
 
 Depth stops there: you to a manager to workers. No manager of managers; no worker spawning a team. Breadth tops out around three teams, five at the absolute ceiling, and is capped by what you can actually keep healthy on your monitor tick (below).

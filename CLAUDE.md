@@ -47,15 +47,16 @@ The system is a layered org. Understanding it requires reading `global-CLAUDE.md
 Each is a subagent type with `name`, `description`, `tools`, and a pinned `model`:
 
 - `architect` (opus) — designs spec/plan; does not build.
-- `reviewer` (opus) — read-only, one assigned lens, returns CLEAN-or-findings.
+- `reviewer` (opus) — read-only (holds Bash/web for diff and doc inspection), one assigned lens, returns CLEAN-or-findings.
 - `intake-drafter` (opus) — drafts the mandate the chief of staff grills against.
+- `senior-implementer` (opus) — builds planned implementation against an approved plan.
+- `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); resolves its own external threads.
 - `researcher` (sonnet) — de-risks one specific unknown.
-- `senior-implementer` (sonnet) — **the only worker that writes code.**
 - `brief-specialist` (sonnet) — renders the milestone brief from the board.
 
 ### Model split (a load-bearing invariant)
 
-Judgment layer runs on **Opus**, execution layer on **Sonnet** (escalating to Opus for high-blast or unusually hard slices). Worker models are pinned in agent frontmatter, so they're automatic. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire judgment layer. Always start the lead session on Opus.
+Anything that judges or writes code runs on **Opus** — chief of staff, managers, `architect`, `reviewer`, `senior-implementer`, `bug-fixer`. Only the two low-judgment support roles run on **Sonnet**: `researcher` (gathering) and `brief-specialist` (rendering). Writing a fix or reconciling findings is judgment, not typing, so a cheaper tier there risks a tunnel-visioned bolt-on — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire judgment layer. Always start the lead session on Opus.
 
 ## Conventions when editing
 

@@ -23,7 +23,7 @@ Substantive work moves `spec -> plan -> build`, and each gate is held by fresh, 
 
 ## Workers
 
-Spawn up to two **build** workers at a time, from `architect`, `researcher`, `senior-implementer`. Two is the build cap; if a chunk seems to need more, sequence it or flag the chief of staff rather than overloading. Each worker that writes code works in its own git worktree on its own branch. Workers are ephemeral and terminate when done; only you stay warm.
+Spawn up to two **build** workers at a time, from `architect`, `researcher`, `senior-implementer` (executing an approved plan), and `bug-fixer` (bugs, regressions, and review/PR findings). Two is the build cap; if a chunk seems to need more, sequence it or flag the chief of staff rather than overloading. Each worker that writes code works in its own git worktree on its own branch. Workers are ephemeral and terminate when done; only you stay warm.
 
 Reviewers are a separate class and do not count against the build cap. At a gate, spawn a panel of fresh, independent `reviewer` agents, one per lens, sized to the stakes (per `adversarial-review`). They are read-only, so running a panel alongside your build workers is safe; the only ceiling on the panel is what you can health-check on the monitor tick.
 

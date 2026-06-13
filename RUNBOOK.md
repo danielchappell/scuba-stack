@@ -18,12 +18,16 @@ Full install is in `INSTALL.md`; the short version:
 ## Directory layout
 
 ```
-your-repo/
-  CLAUDE.md
-  .claude/
-    agents/      architect.md, researcher.md, senior-implementer.md
-    skills/      chief-of-staff/, team-manager/, adversarial-review/, process-health-monitor/, html-executive-brief/
-  .scuba/
+~/.claude/              # user scope — installed once, shared by every project
+  scuba.md              # the always-on pointer (imported by ~/.claude/CLAUDE.md)
+  agents/               # worker pool: architect, bug-fixer, reviewer, senior-implementer,
+                        #   researcher, intake-drafter, brief-specialist
+  skills/               # chief-of-staff/, team-manager/, ship-gate/, adversarial-review/, …
+  .scuba-manifest       # internal: what the installer placed, for clean reinstall
+
+your-repo/              # per project — nothing required up front
+  CLAUDE.md             # optional: project stack, paths, external-reviewer wiring
+  .scuba/               # created by the chief of staff on first use
     board.md
     teams/
     briefs/
@@ -45,13 +49,14 @@ your-repo/
 
 ## Models
 
-The judgment layer runs on Opus: the chief of staff, the managers, the architect, and the reviewers. The execution layer runs on Sonnet: the senior implementer, the researcher, and the brief specialist, each escalating to Opus for a high-blast or unusually hard slice. The four worker models are pinned in their agent files, so they're automatic. The chief of staff and managers are not pinned, because they run as the launched session and its teammates, so you must start the lead on Opus or the whole judgment layer silently drops with it.
+Everything that judges or writes code runs on Opus: the chief of staff, the managers, the architect, the reviewer, the senior implementer (plan execution), and the bug-fixer (root-cause repair). Only the researcher (gathering) and the brief specialist (rendering) run on Sonnet. Worker models are pinned in their agent files, so they're automatic. The chief of staff and managers are not pinned, because they run as the launched session and its teammates, so you must start the lead on Opus or the whole judgment layer silently drops with it.
 
 ## Cost and behavior notes
 
 - A three-team run costs several times a single session, and direct inter-agent messages bill per round trip. The board-first coordination rule in `CLAUDE.md` is what keeps that down.
 - Idle teammates gray out and self-terminate to save tokens. The 15-minute heartbeat keeps your managers warm; if you want a team to stand down, just let it idle out.
 - Keep the quality bar in your opening briefing to the lead. It passes that standard down to every teammate, which is your main quality lever without micromanaging.
+- Fix-workers (`senior-implementer`, `bug-fixer`) can resolve their own external/PR review threads, but the auto-permission mode may block the `gh` writes for *relayed* findings — ones that reached the worker via you rather than as part of its named task — judging them out-of-scope. Pre-approve `gh` PR-comment writes, or fold the findings into the worker's mandate, so it closes its own threads instead of routing every resolution back through you.
 
 ## Shutdown
 

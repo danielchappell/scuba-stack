@@ -112,13 +112,14 @@ Each agent is a single `.md` file defining a subagent type, with its model pinne
 | [`architect`](agents/architect.md) | Opus | Designs the spec and plan; never builds |
 | [`reviewer`](agents/reviewer.md) | Opus | Read-only, one assigned lens, returns CLEAN-or-findings |
 | [`intake-drafter`](agents/intake-drafter.md) | Opus | Drafts the mandate the chief of staff grills you against |
+| [`senior-implementer`](agents/senior-implementer.md) | Opus | Builds planned implementation against an approved plan |
+| [`bug-fixer`](agents/bug-fixer.md) | Opus | Solves bugs & reconciles review/PR findings holistically — reproduce, root-cause, repair the system (not just the test) |
 | [`researcher`](agents/researcher.md) | Sonnet | De-risks one specific unknown |
-| [`senior-implementer`](agents/senior-implementer.md) | Sonnet | **The only worker that writes code** |
 | [`brief-specialist`](agents/brief-specialist.md) | Sonnet | Renders the milestone executive brief from the board |
 
 ### The model split (load-bearing)
 
-The **judgment layer runs on Opus** (chief of staff, managers, architect, reviewers); the **execution layer runs on Sonnet** (implementer, researcher, brief specialist), escalating to Opus for high-blast or unusually hard slices. Worker models are pinned in their files, so they're automatic. The chief of staff and managers are **not** pinned — they inherit the session model — so **always start the lead session on Opus**, or the whole judgment layer silently downgrades with it.
+Everything that exercises judgment or writes code runs on **Opus**: the chief of staff, the managers, `architect`, `reviewer`, `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Only the two genuinely low-judgment support roles run on **Sonnet** — `researcher` (gathering) and `brief-specialist` (rendering from the board). The split exists because writing a fix or reconciling review findings is judgment, not typing; the gain from a cheaper tier there isn't worth a tunnel-visioned, bolt-on repair. Worker models are pinned in their files; the chief of staff and managers are **not** pinned — they inherit the session model — so **always start the lead session on Opus**, or the whole judgment layer silently downgrades with it.
 
 ---
 
@@ -171,11 +172,11 @@ Experimental. It rides Claude Code's **experimental** Agent Teams feature and is
 
 ## Lineage & credits
 
-Scuba Stack combines the best of two projects and adds one idea of its own:
+Scuba Stack stands on two projects and contributes its own orchestration model:
 
 - **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent (MIT) — which pioneered disciplined, aggressively-triggered skills for Claude Code and the convention of skills as on-demand, description-routed Markdown.
-- **[pstack](https://github.com/cursor/plugins/tree/main/pstack)** by Lauren Tan (poteto), MIT — which named and defined the engineering-principle vocabulary (`laziness-protocol`, `foundational-thinking`, `boundary-discipline`, and more) that Scuba Stack's principle skills draw on, and whose "parallelize with confidence" approach informed the execution model.
-- **Scuba Stack's own contribution:** *parallelize everything, and never block the executive.* The orchestrator dispatches and stays free so planning never stalls behind execution; managers and workers fan out as wide as they can be monitored; the human is the only deliberate point of serialization.
+- **[pstack](https://github.com/cursor/plugins/tree/main/pstack)** by Lauren Tan (poteto), MIT — the deepest influence. Scuba Stack draws on pstack's engineering-principle vocabulary (`laziness-protocol`, `foundational-thinking`, `boundary-discipline`, and ~14 more), its parallelize-with-confidence and *never-block-on-the-human* ideas (which Scuba Stack reframes as "never block the executive"), and its evidence-driven, root-cause bug-fixing doctrine — the foundation the `bug-fixer` agent is built on.
+- **Scuba Stack's own contribution:** the **orchestration model** — a standing chief-of-staff → manager → worker org with `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, and a durable board, in which the executive layer only ever *dispatches* and therefore never blocks. (pstack reaches quality through `poteto-mode` and playbooks; Scuba Stack reaches it through a persistent org.)
 
 Scuba Stack is **independently written** — it reuses none of those projects' prose. (Verified by deterministic 8-gram scan against the superpowers corpus, the `cursor/plugins` repo including pstack, and every other locally installed skill: the only shared word-sequences are the engineering-principle skill *names* themselves — shared vocabulary, not copied text — which the credit above acknowledges.) The credit is for inspiration and vocabulary, not for copied material.
 
