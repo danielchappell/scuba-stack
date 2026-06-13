@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Scuba Stack runtime state (created by the org when run inside a repo)
+.scuba/
+
+# Installer backups of a user's CLAUDE.md
+*.scuba-bak.*
+
+# Editor / tooling
+.idea/
+.vscode/
+*.swp
+*~

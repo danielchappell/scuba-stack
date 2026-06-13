@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Executive Brief — Milestone 03</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #e6eaef;
+    --surface: #fbfcfd;
+    --ink: #14202b;
+    --ink-soft: #41525f;
+    --slate: #5b6b79;
+    --hair: #d6dde4;
+    --hair-strong: #c2ccd5;
+
+    --arch: #0f766e;        /* architecture lens */
+    --arch-tint: #e1efed;
+    --arch-ink: #0a4f49;
+    --product: #b9591a;     /* product lens */
+    --product-tint: #f6e9dc;
+    --product-ink: #8a4012;
+
+    --ok: #2f7a52;
+    --attention: #b9591a;
+    --risk: #ad3f2a;
+
+    --display: "Space Grotesk", system-ui, sans-serif;
+    --read: "Newsreader", Georgia, serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+
+    --maxw: 1080px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--read);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    padding: clamp(12px, 4vw, 48px) clamp(12px, 4vw, 40px);
+  }
+
+  .doc {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--hair-strong);
+    border-radius: 4px;
+    box-shadow: 0 1px 0 rgba(20,32,43,.04), 0 24px 60px -32px rgba(20,32,43,.32);
+    overflow: hidden;
+  }
+
+  .label {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  /* ---- Masthead ---- */
+  .masthead {
+    padding: clamp(24px, 4vw, 44px) clamp(20px, 4vw, 48px) 26px;
+    border-bottom: 1px solid var(--hair);
+    position: relative;
+  }
+  .masthead::before {
+    content: "";
+    position: absolute; inset: 0 0 auto 0; height: 4px;
+    background: linear-gradient(90deg, var(--product) 0 50%, var(--arch) 50% 100%);
+  }
+  .eyebrow {
+    color: var(--slate);
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .eyebrow .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--slate); }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(30px, 5.2vw, 50px);
+    line-height: 1.03;
+    letter-spacing: -.02em;
+    margin: 0 0 6px;
+    max-width: 18ch;
+  }
+  .subtitle {
+    font-family: var(--read);
+    font-size: clamp(17px, 2.4vw, 20px);
+    color: var(--ink-soft);
+    margin: 0;
+    max-width: 56ch;
+  }
+
+  /* ---- Status ribbon ---- */
+  .ribbon {
+    display: flex; flex-wrap: wrap; gap: 0;
+    border-top: 1px solid var(--hair);
+    border-bottom: 1px solid var(--hair);
+    background: #f4f6f8;
+  }
+  .ribbon .cell {
+    padding: 12px clamp(16px, 3vw, 28px);
+    border-right: 1px solid var(--hair);
+    flex: 1 1 auto;
+    min-width: 130px;
+  }
+  .ribbon .cell:last-child { border-right: 0; }
+  .ribbon .k { color: var(--slate); display: block; margin-bottom: 4px; }
+  .ribbon .v { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--ink); }
+  .badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+    padding: 4px 10px; border-radius: 3px;
+  }
+  .badge.ok { background: #e2efe8; color: var(--ok); }
+  .badge .pip { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  /* ---- Gate trail (signature) ---- */
+  .gates {
+    padding: 26px clamp(20px, 4vw, 48px) 30px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .gates .label { color: var(--slate); margin-bottom: 16px; }
+  .trail { display: flex; align-items: stretch; gap: 0; }
+  .gate {
+    flex: 1 1 0; position: relative;
+    display: flex; flex-direction: column; gap: 8px;
+    padding-top: 22px;
+    opacity: 0;
+    animation: rise .5s ease forwards;
+  }
+  .gate:nth-child(1){animation-delay:.05s}
+  .gate:nth-child(2){animation-delay:.12s}
+  .gate:nth-child(3){animation-delay:.19s}
+  .gate:nth-child(4){animation-delay:.26s}
+  .gate:nth-child(5){animation-delay:.33s}
+  @keyframes rise { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+  .gate .node {
+    position: absolute; top: 0; left: 0;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--surface); border: 2px solid var(--hair-strong); z-index: 2;
+  }
+  .gate .bar {
+    position: absolute; top: 7px; left: 8px; right: 0; height: 2px;
+    background: var(--hair-strong); z-index: 1;
+  }
+  .gate:last-child .bar { display: none; }
+  .gate.done .node { background: var(--arch); border-color: var(--arch); }
+  .gate.done .bar { background: var(--arch); }
+  .gate.current .node { background: var(--product); border-color: var(--product); box-shadow: 0 0 0 4px var(--product-tint); }
+  .gate .gname { font-family: var(--display); font-weight: 500; font-size: 15px; color: var(--ink); }
+  .gate .gmeta { font-family: var(--mono); font-size: 11px; color: var(--slate); letter-spacing: .04em; }
+  .gate.upcoming .gname { color: var(--slate); }
+
+  /* ---- Lenses ---- */
+  .lenses { display: grid; grid-template-columns: 1fr 1fr; }
+  .lens { padding: clamp(22px, 3vw, 36px) clamp(20px, 4vw, 40px); }
+  .lens.product { border-right: 1px solid var(--hair); }
+  .lens-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .lens-tag { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; padding: 4px 9px; border-radius: 3px; }
+  .product .lens-tag { background: var(--product-tint); color: var(--product-ink); }
+  .arch .lens-tag { background: var(--arch-tint); color: var(--arch-ink); }
+  .lens h2 { font-family: var(--display); font-weight: 700; font-size: 21px; letter-spacing: -.01em; margin: 0; }
+  .lens p { margin: 0 0 16px; color: var(--ink-soft); }
+  .lens p.lead { color: var(--ink); font-size: 18px; }
+  .keys { list-style: none; margin: 0 0 18px; padding: 0; }
+  .keys li { position: relative; padding-left: 20px; margin-bottom: 9px; font-size: 15.5px; color: var(--ink-soft); }
+  .keys li::before { content: ""; position: absolute; left: 2px; top: 9px; width: 7px; height: 7px; border-radius: 1px; }
+  .product .keys li::before { background: var(--product); }
+  .arch .keys li::before { background: var(--arch); }
+  .subblock { border-top: 1px solid var(--hair); padding-top: 14px; }
+  .subblock .label { color: var(--slate); margin-bottom: 8px; }
+  .subblock p { font-size: 14.5px; margin-bottom: 0; }
+
+  /* ---- Decisions callout ---- */
+  .needs {
+    margin: 0; padding: clamp(22px, 3vw, 34px) clamp(20px, 4vw, 48px);
+    background: #fbf4ec;
+    border-top: 1px solid var(--hair);
+    border-bottom: 1px solid var(--hair);
+  }
+  .needs .label { color: var(--product-ink); margin-bottom: 14px; }
+  .needs h3 { font-family: var(--display); font-weight: 700; font-size: 20px; margin: 0 0 16px; }
+  .decision { display: flex; gap: 14px; padding: 12px 0; border-top: 1px dashed var(--hair-strong); }
+  .decision:first-of-type { border-top: 0; }
+  .decision .num { font-family: var(--mono); font-weight: 600; color: var(--product); font-size: 14px; padding-top: 2px; }
+  .decision .body { flex: 1; }
+  .decision .q { font-family: var(--read); font-size: 16.5px; color: var(--ink); margin: 0 0 3px; }
+  .decision .ctx { font-size: 14px; color: var(--slate); margin: 0; }
+
+  /* ---- Scope strip ---- */
+  .scope { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--hair); }
+  .scope .stat { flex: 1 1 auto; min-width: 120px; padding: 18px clamp(16px, 3vw, 28px); border-right: 1px solid var(--hair); }
+  .scope .stat:last-child { border-right: 0; }
+  .scope .num { font-family: var(--display); font-weight: 700; font-size: 26px; letter-spacing: -.01em; }
+  .scope .cap { font-family: var(--mono); font-size: 11px; color: var(--slate); text-transform: uppercase; letter-spacing: .1em; margin-top: 4px; }
+
+  footer { padding: 20px clamp(20px, 4vw, 48px); display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+  footer .label { color: var(--slate); }
+
+  @media (max-width: 720px) {
+    .lenses { grid-template-columns: 1fr; }
+    .lens.product { border-right: 0; border-bottom: 1px solid var(--hair); }
+    .trail { flex-direction: column; gap: 18px; }
+    .gate { padding-top: 0; padding-left: 26px; }
+    .gate .bar { top: 8px; left: 7px; width: 2px; height: 100%; right: auto; }
+    .gate:last-child .bar { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .gate { animation: none; opacity: 1; }
+  }
+  a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--arch); outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <main class="doc">
+    <!-- MASTHEAD: swap eyebrow date/id, h1 milestone name, subtitle one-line thesis -->
+    <header class="masthead">
+      <div class="eyebrow label">
+        <span>Executive Brief</span><span class="dot"></span>
+        <span>Milestone 03</span><span class="dot"></span>
+        <span>Team Atlas</span>
+      </div>
+      <h1>Realtime Collaboration: Editing Core</h1>
+      <p class="subtitle">First shared-editing vertical slice is built and in QA: two cursors, one document, conflict-free. This brief covers what it does for users and the sync architecture underneath it.</p>
+    </header>
+
+    <!-- RIBBON: id / date / teams / overall status -->
+    <div class="ribbon">
+      <div class="cell"><span class="k label">Brief ID</span><span class="v">BRF-0030</span></div>
+      <div class="cell"><span class="k label">Date</span><span class="v">2026-06-11</span></div>
+      <div class="cell"><span class="k label">Teams</span><span class="v">Atlas · Beacon</span></div>
+      <div class="cell"><span class="k label">Status</span><span class="badge ok"><span class="pip"></span>On Track</span></div>
+    </div>
+
+    <!-- GATE TRAIL: mark done / current / upcoming for this milestone -->
+    <section class="gates" aria-label="Lifecycle position">
+      <div class="label">Lifecycle position</div>
+      <div class="trail">
+        <div class="gate done"><span class="node"></span><span class="bar"></span><span class="gname">Spec</span><span class="gmeta">approved · 06-04</span></div>
+        <div class="gate done"><span class="node"></span><span class="bar"></span><span class="gname">Plan</span><span class="gmeta">approved · 06-07</span></div>
+        <div class="gate done"><span class="node"></span><span class="bar"></span><span class="gname">Build</span><span class="gmeta">complete · 06-10</span></div>
+        <div class="gate current"><span class="node"></span><span class="bar"></span><span class="gname">QA</span><span class="gmeta">in progress</span></div>
+        <div class="gate upcoming"><span class="node"></span><span class="bar"></span><span class="gname">Review</span><span class="gmeta">awaiting</span></div>
+      </div>
+    </section>
+
+    <!-- TWO LENSES: product (what + why for users) / architecture (how it's built) -->
+    <div class="lenses">
+      <section class="lens product">
+        <div class="lens-head"><span class="lens-tag">Product</span></div>
+        <h2>What shipped, and why it matters</h2>
+        <p class="lead">Two people can now edit the same document at the same time and see each other's cursors live, with no save button and no overwrite.</p>
+        <p>This is the slice that turns the editor from single-player into a tool teams can actually work in together. It is intentionally narrow: text only, two concurrent editors, one document. It proves the hard part works before we widen it.</p>
+        <ul class="keys">
+          <li>Live presence: named cursors and selections update within ~80ms.</li>
+          <li>No conflicts: simultaneous edits to the same line merge cleanly.</li>
+          <li>Offline-tolerant: edits made while disconnected reconcile on reconnect.</li>
+        </ul>
+        <div class="subblock">
+          <div class="label">Not yet in scope</div>
+          <p>Comments, more than two editors, and rich formatting are deferred to the next mandate. The slice is for de-risking sync, not for release.</p>
+        </div>
+      </section>
+
+      <section class="lens arch">
+        <div class="lens-head"><span class="lens-tag">Architecture</span></div>
+        <h2>How it works underneath</h2>
+        <p class="lead">A CRDT sync layer sits between the editor and a thin relay, so clients converge without a central authority resolving conflicts.</p>
+        <p>Each client holds the full document state as a conflict-free replicated data type; the relay only fans out encrypted deltas. That keeps the server stateless and makes offline reconnection a merge rather than a special case.</p>
+        <ul class="keys">
+          <li>CRDT (Yjs-style) document model; deltas, not full-doc syncs.</li>
+          <li>Stateless WebSocket relay; horizontally scalable, no sticky sessions.</li>
+          <li>Presence on a separate ephemeral channel, off the persistence path.</li>
+        </ul>
+        <div class="subblock">
+          <div class="label">Open risk</div>
+          <p>Large-document delta history grows unbounded; needs a compaction/snapshot strategy before this scales past the slice. Flagged below.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- WHAT NEEDS YOU: the escalations a decision-maker must answer -->
+    <section class="needs">
+      <div class="label">Needs your decision</div>
+      <h3>Three calls before Review closes</h3>
+      <div class="decision">
+        <span class="num">01</span>
+        <div class="body">
+          <p class="q">Snapshot strategy: server-side compaction or client-driven?</p>
+          <p class="ctx">Affects whether the relay stays fully stateless. Architecture team recommends client-driven; wants your sign-off because it shifts a cost to the client.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <span class="num">02</span>
+        <div class="body">
+          <p class="q">Hold the two-editor cap, or fund the N-editor generalization now?</p>
+          <p class="ctx">Going to N now adds ~1 mandate but avoids a rework later. Product lead leans hold; flagging the tradeoff.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <span class="num">03</span>
+        <div class="body">
+          <p class="q">Is ~80ms presence latency acceptable as the target, or tighter?</p>
+          <p class="ctx">Tighter means a dedicated presence region. Cost vs. feel call that's yours, not ours.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCOPE STRIP: a few real metrics from the board -->
+    <div class="scope">
+      <div class="stat"><div class="num">4,210</div><div class="cap">Lines added</div></div>
+      <div class="stat"><div class="num">11</div><div class="cap">Components</div></div>
+      <div class="stat"><div class="num">94%</div><div class="cap">Test coverage</div></div>
+      <div class="stat"><div class="num">2</div><div class="cap">Open risks</div></div>
+    </div>
+
+    <footer>
+      <span class="label">Compiled by Brief Specialist · Team Atlas</span>
+      <span class="label">Source: .scuba/briefs/m03 · board rev 0030</span>
+    </footer>
+  </main>
+</body>
+</html>
