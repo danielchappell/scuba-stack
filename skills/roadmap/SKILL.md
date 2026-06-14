@@ -13,11 +13,27 @@ Orchestration state has to be visible to the human on their own branch and to a 
 
 ## The document
 
-`.scuba/roadmap.md` has three sections, always in this order — start from the bundled `template.md`, see `example.md` for a filled one, and don't redesign the shape:
+`.scuba/roadmap.md` is built by **copying `template.md` verbatim and filling in the threads** — never by authoring a roadmap from scratch. It has three sections, always in this order (see `example.md` for a filled one):
 
 - **Now active** — one or two lines per currently-moving thread: what's happening *right now*, each linking to its `status.md`. The human's at-a-glance status report.
 - **Decisions waiting on me** — pinned near the top; every open call that needs the user, one line each with a context link. Never bury a decision in the tree.
-- **Roadmap** — a **Mermaid `flowchart`** tree (renders as a real diagram on GitHub and in any mermaid-aware preview; no legend — the stage emoji in the labels are self-evident). Each node is a thread, labelled with its stage emoji and coloured by stage from the fixed `classDef` set (don't invent colours). Each node `click`s through to its current artifact, and the artifacts chain forward — **spec → plan → executive brief**: the roadmap links to the spec, the spec to its plan, a finished thread to its brief.
+- **Roadmap** — a **Mermaid `flowchart TD`** tree (renders as a real diagram on GitHub and in any mermaid-aware preview). Each node is a thread that `click`s through to its current artifact, and the artifacts chain forward — **spec → plan → executive brief**: the roadmap links to the spec, the spec to its plan, a finished thread to its brief.
+
+### The frame is frozen; only the threads vary
+
+The roadmap looks identical in every project and every session except for the one thing that legitimately differs: the actual threads and their stages. Everything around that is a fixed frame you copy from `template.md` and never re-author:
+
+- **Header line, the three section headings and their order, and the closing caption** — byte-for-byte from the template.
+- **The whole `classDef` block — all eight classes, in the template's order, every time.** Never prune an unused class, never reorder them, never change a colour. A stage transition then never touches the classDef block; it only swaps a node's emoji and `:::class`.
+- **Shapes** — the root is the only stadium node `([...])`; every initiative and thread is a rectangle `[...]`. No other shapes.
+
+The only edits you make live inside the tree: add, remove, relabel, and re-link nodes and edges. Every node follows one grammar, no choices:
+
+```
+ID[<emoji> <label>]:::<stage>      +      click ID "<artifact-path>" "<hint>"
+```
+
+where the emoji and `:::<stage>` always agree, from the fixed mapping (🟡 spec · 🔵 plan · 🟢 execution · 🔎 review · ⛔ blocked · ✅ done · 💤 parked). Same state of the world in, same markup out — so two sessions looking at the same threads produce the same file.
 
 **The roadmap is the index, not the detail.** The per-thread recovery fields — branch, worktree, last commit SHA, next step, blocker — live in each thread's `teams/<team>/<thread>.status.md`, so the tree stays scannable while recovery still has every field it needs. Keep it for the human's glance: they read this instead of asking you.
 

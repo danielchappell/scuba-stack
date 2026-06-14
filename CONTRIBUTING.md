@@ -32,7 +32,7 @@ A skill is a folder `skills/<name>/SKILL.md`:
 An agent is a single file `agents/<name>.md` with frontmatter `name`, `description`, `tools`, `model`:
 
 - The `description`'s "Use when…" drives dispatch.
-- `model` pins the worker's tier (Opus for judgment and code-writing, Sonnet for the low-judgment support roles like research and rendering — see [ARCHITECTURE.md](ARCHITECTURE.md#the-model-split)). The chief of staff and managers are intentionally unpinned.
+- `model` pins the worker's tier — **every worker runs on Opus** (see [ARCHITECTURE.md](ARCHITECTURE.md#every-worker-runs-on-opus)). The chief of staff and managers are intentionally unpinned (they inherit the session model).
 
 ## The naming contract
 

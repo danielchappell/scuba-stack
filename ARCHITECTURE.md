@@ -62,14 +62,13 @@ Two disciplines fall out of this:
 
 A killed or interrupted agent sends no completion message, so trusting silence is how delegated work sits dead for hours. `process-health-monitor` runs a re-arming poll (~10-minute cadence) that judges liveness from **what work produces** — output mtimes, git SHAs, written artifacts, branch/PR state — never from the presence or absence of a notification. A dispatch (or a re-trigger of an external reviewer or CI run) stays an open loop until it is confirmed closed.
 
-## The model split
+## Every worker runs on Opus
 
-The split is a load-bearing invariant, and the line is *judgment*, not *who writes code*:
+This is a load-bearing invariant: every worker agent runs on **Opus** — `architect`, `groomer` (slicing epics), `hunter` (adversarial finding), `intake-drafter`, `senior-implementer` (executing a plan), `bug-fixer` (independent root-cause work), `researcher` (gathering), `brief-specialist` (rendering from the control plane), and `scribe` (keeping the roadmap current).
 
-- **Opus** — everything that judges or writes code: chief of staff, managers, `architect`, `groomer` (slicing epics), `hunter` (adversarial finding), `senior-implementer` (executing a plan), and `bug-fixer` (independent root-cause work). Writing a fix or reconciling review/PR findings is judgment-heavy; a cheaper tier there buys a tunnel-visioned, bolt-on repair — the opposite of what `ship-gate` and `integrate-dont-bolt-on` exist for. The two code-writers therefore split by *posture*: the `senior-implementer` executes an approved plan (the plan is the contract), while the `bug-fixer` investigates and repairs holistically (no plan, just a symptom and a system).
-- **Sonnet** — the genuinely low-judgment support roles: `researcher` (gathering), `brief-specialist` (rendering from the control plane), and `scribe` (keeping the roadmap current).
+Judgment and code-writing obviously need it; a fix or a reconciliation of review/PR findings on a cheaper tier buys a tunnel-visioned, bolt-on repair — the opposite of what `ship-gate` and `integrate-dont-bolt-on` exist for. The support roles run on Opus too rather than seed a weaker read anywhere in the org that the rest of the system then has to catch. The two code-writers split by *posture*: the `senior-implementer` executes an approved plan (the plan is the contract), while the `bug-fixer` investigates and repairs holistically (no plan, just a symptom and a system).
 
-Worker models are pinned in agent frontmatter. The chief of staff and managers are **deliberately not pinned**: they run as the launched session and its teammates, inheriting the session model. This is why you must **start the lead session on Opus** — launching on Sonnet silently downgrades the entire judgment layer.
+Worker models are pinned in agent frontmatter. The chief of staff and managers are **deliberately not pinned**: they run as the launched session and its teammates, inheriting the session model. This is why you must **start the lead session on Opus** — launching on Sonnet silently downgrades the entire org.
 
 ## Skills — lazy, triggered, named
 
