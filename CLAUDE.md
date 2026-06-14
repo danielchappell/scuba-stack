@@ -36,7 +36,7 @@ The system is a layered org. Understanding it requires reading `global-CLAUDE.md
 - **Skills load lazily**: a skill's `description` frontmatter is always in context (it's the routing/trigger text); the body loads only when the skill is invoked.
 - **Roles**, top to bottom: the **chief of staff** (the single session the user talks to; dispatches, never builds/triages/reviews itself) → **team managers** (own a chunk end-to-end, spawn workers, run the review loop) → **workers** (the agents in `agents/`).
 - **State** lives in the shared `.scuba/` control plane in the primary working tree, with `.scuba/roadmap.md` as the resume anchor — never in transcripts, and never inside a worker's worktree (so it stays visible on the human's branch). Skills repeatedly enforce: read the roadmap, verify state from git/files, don't re-read history.
-- **Lifecycle**: `intake` (draft mandate → grill user) → spec → plan → build, with `adversarial-review` gating every spec/plan/code gate → `ship-gate` for PR/review → milestones rendered via `html-executive-brief`. `process-health-monitor` runs whenever background agents are live.
+- **Lifecycle**: `intake` (draft mandate → grill user) → spec → plan → build, with `adversarial-review` gating every spec/plan/code gate → `ship-gate` for PR/review → epic bookends rendered via `html-executive-brief`. `process-health-monitor` runs whenever background agents are live.
 
 ### Two families of skills
 
@@ -55,7 +55,7 @@ Each is a subagent type with `name`, `description`, `tools`, and a pinned `model
 - `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); routed real bugs by the steward at the gate, replies with the fixing commit.
 - `steward` (opus) — owns PR closeout: rebases, paginates/triages review threads, resolves, re-verifies live, merges a cleared story to its integration branch; routes real bugs to the bug-fixer.
 - `researcher` (opus) — de-risks one specific unknown.
-- `brief-specialist` (opus) — renders the milestone brief from the control plane.
+- `brief-specialist` (opus) — renders the epic-bookend brief from the control plane.
 - `scribe` (opus) — keeps `.scuba/roadmap.md` current so the chief of staff never blocks; reconciles status and runs the durability mirror; never writes code or decides.
 
 ### Every worker runs on Opus (a load-bearing invariant)
