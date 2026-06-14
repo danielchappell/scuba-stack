@@ -39,4 +39,4 @@ If the root-cause repair needs a refactor larger than the bug, or crosses a desi
 
 ## Hand-off
 
-Return a tight structured summary: what was broken, the root cause (the confirmed mechanism, not a guess), the fix, how you verified it (paste the failing-then-passing evidence verbatim), and which threads you resolved. The diff lives in your worktree branch; your status and findings log go to the shared `.scuba/teams/<team>/` control plane by absolute path, never inside the worktree. Do not spawn other agents.
+Return a tight structured summary: what was broken, the root cause (the confirmed mechanism, not a guess), the fix, how you verified it (paste the failing-then-passing evidence verbatim), and which threads you resolved. The diff lives in your worktree branch; your status and findings log go to the shared `.scuba/teams/<team>/` control plane by absolute path, never inside the worktree. Before any write, confirm your cwd is inside your own worktree, not the primary tree; if a write would land outside it, stop — that is the isolation leak the enforcement hook also guards, and you never `cd` into the primary tree to work. Do not spawn other agents.

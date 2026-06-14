@@ -23,6 +23,7 @@ Full install is in `INSTALL.md`; the short version:
   agents/               # worker pool: architect, groomer, hunter, bug-fixer, senior-implementer,
                         #   researcher, intake-drafter, brief-specialist, scribe
   skills/               # chief-of-staff/, team-manager/, ship-gate/, adversarial-review/, …
+  hooks/                # scuba-guard.sh — the PreToolUse enforcement hook (wired into settings.json)
   .scuba-manifest       # internal: what the installer placed, for clean reinstall
 
 your-repo/              # per project — nothing required up front
@@ -39,6 +40,25 @@ your-repo/              # per project — nothing required up front
 2. **It dispatches at the right depth.** For a contained task or research it spins up a single worker subagent directly. For a big chunk it spawns a manager teammate, each with a full mandate in the spawn prompt (goal, constraints, deliverable, definition of done, paths, quality bar). Typical load is two to four tasks plus a researcher; managers appear only when a chunk earns one.
 3. **Managers run their chunk autonomously**, spawning their own worker subagents, running the review loop, monitoring, and reporting up through the roadmap and heartbeat.
 4. **You stay talking to the chief of staff.** Hand it new asks, redirect, reprioritize. It stays free because it dispatches rather than triaging or building — if you ever see it grinding through a backlog itself, that's the bug.
+
+## Enforcement hook
+
+The installer wires one `PreToolUse` hook (`~/.claude/hooks/scuba-guard.sh`) into `~/.claude/settings.json`. It is the lever behind two cardinal rules that were previously convention only:
+
+- **Worktree isolation.** A code `Write`/`Edit`/`MultiEdit`/`NotebookEdit` outside the calling agent's own worktree is denied. Writes to any `.scuba/` path and to `/tmp` are allowed; from the top-level (lead/CoS) session, `.md`/operator-doc and `.scuba/` writes are allowed but a tracked code write is denied (the lead dispatches, it does not build).
+- **Never-draft PRs.** `gh pr create --draft` / `gh pr new --draft` are denied — a draft PR does not start the external reviewer.
+
+Operating it:
+
+- **Restart to activate.** Hooks load at session start, so a fresh install (or any change to the hook) is inert until you restart the terminal.
+- **It fires and blocks even under `--dangerously-skip-permissions`.** This is verified: the recommendation to launch with that flag for low-risk runs stands as-is — the enforcement hook is not turned off by bypass mode, so there is no paired warning to heed.
+- **Disable temporarily.** Remove the scuba entry from `.hooks.PreToolUse` in `~/.claude/settings.json` (it is the one whose `command` ends in `scuba-guard.sh`) and restart. Re-running `bash install.sh` puts it back.
+- **The Bash arm is best-effort.** It catches the `cd <primary> && git rm`-family and the draft-PR pattern only; the script header enumerates the evasions it does not catch (`git -C`, `git mv`, `rm -rf`, shell redirection writing code to the primary tree, a draft opened via `gh api`). The reliable guard is the file-write containment, which fires however the write is phrased through a tool.
+
+Smoke tests:
+
+- **Standalone (in any session, no restart needed).** `bash hooks/test-scuba-guard.sh` from the bundle pipes sample `PreToolUse` payloads through the script and asserts every allow/deny decision (primary-tree write denied, in-worktree and `.scuba/` writes allowed, `…/x.scuba.ts` lookalike denied, `MultiEdit`/`NotebookEdit` denied, `npm install` from a worktree allowed, draft PR denied, clean PR allowed). This proves the decision logic outside the live harness.
+- **Subagent (restarted harness).** The load-bearing check the standalone test cannot cover: whether a user-scope `PreToolUse` hook fires on a *subagent's* tool calls at all (the leak actors are subagents, not the top-level session). Install, restart, spawn a real subagent (e.g. a senior-implementer), have it `Write` to a primary-tree code path, and confirm the hook **fires on the subagent's tool call and denies** it. The hook is built to work whether or not `agent_id` is present in subagent input (it derives the allowed worktree from `agent_id` when present, else from the cwd's worktree ancestor). If the hook does **not** fire on subagent tool calls at all, worktree isolation falls back to the prose discipline in the code-writer agents — raise it as a setup blocker.
 
 ## Watching and steering
 
