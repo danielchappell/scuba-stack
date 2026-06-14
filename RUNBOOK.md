@@ -36,8 +36,8 @@ your-repo/              # per project — nothing required up front
 ## Running it
 
 1. **Start the chief of staff** as your lead session: open Claude Code **on Opus** (the lead and its manager teammates run on the session model, so this is what pins your judgment layer to Opus), tell it it's your chief of staff and to read `CLAUDE.md`, and give it your ask. Only the worker subagents set their own model in their agent files; the lead and managers do not, so launching on Sonnet silently downgrades the whole judgment layer.
-2. **It dispatches at the right depth.** For a contained task or research it spins up a single worker subagent directly. For a big chunk it spawns a manager teammate, each with a full mandate in the spawn prompt (goal, constraints, deliverable, definition of done, paths, quality bar). Typical load is two to four tasks plus a researcher; managers appear only when a chunk earns one.
-3. **Managers run their chunk autonomously**, spawning their own worker subagents, running the review loop, monitoring, and reporting up through the roadmap and heartbeat.
+2. **It dispatches at the right depth.** For a contained task or research it spins up a single worker subagent directly. For an epic it runs the `team-manager` lifecycle itself — a hat the chief of staff wears, not a separate agent it spawns (a spawned teammate manager is the scaling path for when one session can't hold every epic at once). Every dispatch carries a full mandate (goal, constraints, deliverable, definition of done, paths, quality bar). Typical load is two to four tasks plus a researcher.
+3. **It runs the epic's lifecycle in manager mode**, spawning the worker subagents, grooming into slices, running the review loop, owning the integration branch, monitoring, and keeping the roadmap current on its heartbeat.
 4. **You stay talking to the chief of staff.** Hand it new asks, redirect, reprioritize. It stays free because it dispatches rather than triaging or building — if you ever see it grinding through a backlog itself, that's the bug.
 
 ## Watching and steering

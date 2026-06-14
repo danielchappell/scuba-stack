@@ -12,7 +12,7 @@ Scuba Stack is an answer to both: **keep the executive free so nothing blocks pl
 
 The session you talk to is the **chief of staff**. Its cardinal rule is *dispatch, don't do*. It does not triage, review, or build — those are precisely the actions that would make it grind and therefore block you. Its only jobs are:
 
-- **Pick the dispatch depth.** A contained task or research goes to a single worker directly. A big or risky chunk goes to an autonomous manager. The rule of thumb: if you'd be tempted to triage or review a chunk yourself, that's exactly when to hand the *whole chunk* to a manager.
+- **Pick the dispatch depth.** A contained task or research goes to a single worker directly. For a big or risky chunk the chief of staff puts on the manager hat — at current scale the manager *is* the chief of staff running the `team-manager` skill itself (a hat it wears, not a separate agent it spawns); a real teammate manager is the documented scaling path on the shelf. The rule of thumb: if you'd be tempted to triage or review a chunk yourself, that's exactly when to put on the manager hat for the *whole chunk*.
 - **Monitor everything in flight** (Principle 3).
 - **Surface decisions** one at a time, each with a recommendation.
 
@@ -24,13 +24,17 @@ Managers and workers run concurrently. The deliberate bottleneck is **you**: the
 
 ## The layered org
 
+The three-level shape below is the **scaling shape** — the full org once epics outgrow a single session. At current scale the middle level is not a separate agent: the chief of staff *wears the `team-manager` hat itself* for an epic. A spawned teammate manager is the documented scaling path, kept on the shelf for when one session can no longer hold every epic at once.
+
 ```
 You  →  Chief of Staff  →  Team Manager  →  Workers
+                          (the hat the CoS wears; a spawned
+                           teammate manager is the scaling path)
 ```
 
 - **Depth caps at three levels.** No manager of managers; no worker spawns a team. This keeps the accountability chain legible and the monitoring tractable.
 - **Breadth caps at monitorability, not ambition.** The lead only fans out as wide as it can health-check on a single monitoring tick (roughly three teams, five at the absolute ceiling). More parallel agents than you can keep alive is exactly how stalls hide.
-- **Managers absorb coordination.** A manager exists to take a chunk's triage and review *off* the chief of staff. Doing that coordination is its job, not a failure; what it must not do is the production work itself.
+- **The manager role absorbs coordination.** The role exists to take a chunk's triage and review *off* the executive's hands — at current scale the chief of staff runs it in manager mode, and when a real teammate manager is spawned it does the same. Running that coordination is the role's job, not a failure; what it must not do is the production work itself.
 
 ## The lifecycle and adversarial review
 
