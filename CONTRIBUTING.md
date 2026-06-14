@@ -34,6 +34,7 @@ An agent is a single file `agents/<name>.md` with frontmatter `name`, `descripti
 - The `description`'s "Use when…" drives dispatch.
 - `model` pins the worker's tier — **every worker runs on Opus** (see [ARCHITECTURE.md](ARCHITECTURE.md#every-worker-runs-on-opus)). The chief of staff and managers are intentionally unpinned (they inherit the session model).
 - **An agent with a governing skill must instruct itself to open and follow that skill as its first action** — referencing a skill by name is not enough to make it load. The always-loaded `description` is not the skill body; an agent that works from memory of a named skill never pulls the procedure where it actually lives. Make the governing skill a loud first-action invoke. For an agent whose skill use is conditional, force the one always-relevant skill and list the rest as a "consult when the work calls for it" menu, rather than loading a fixed list by ritual.
+- **An agent that produces a file deliverable must write it with the `Write`/`Edit` tools, never with Bash heredocs (`cat > f << EOF`).** Heredocs silently truncate on a broken shell, landing a partial file that reports success.
 
 ## The naming contract
 
