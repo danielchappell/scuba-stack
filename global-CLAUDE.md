@@ -11,7 +11,7 @@ In any session that involves coordinating or building software:
 - When work is finished and about to go up for review, follow the `ship-gate` skill: open the PR first to start the external reviewer, then run a parallel hunter swarm over the diff, reconcile both streams, and fix at the root.
 - Whenever background agents are running, follow the `process-health-monitor` skill.
 - When changing existing code, fixing a bug or adding a feature, follow `integrate-dont-bolt-on`: repair the root cause and integrate the change, don't bolt on another condition.
-- At a milestone, have a brief specialist render the brief (`html-executive-brief` skill) and present it; don't render it yourself.
+- At an epic's bookends (architecture brief at design-done, executive brief at merge), have a brief specialist render the brief (`html-executive-brief` skill) and present it; don't render it yourself.
 
 Invariants, always:
 

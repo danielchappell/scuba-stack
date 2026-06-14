@@ -49,7 +49,7 @@ Transcript memory is unreliable across compaction and resumes, so Scuba Stack ne
 
 - **`roadmap.md`** — the resume anchor: a **Mermaid** stage-tagged tree indexing every thread, plus a "now active" digest and the decisions waiting on the user. Each node links to its artifacts (which chain spec → plan → brief); the per-thread recovery detail — branch, worktree, last SHA, next step, blocker — lives in its `teams/<team>/status.md`, so the tree stays scannable. The chief of staff reads it first and keeps it current on its monitor tick, delegating heavy reconciliation to a `scribe` so it never blocks (the `roadmap` skill is the format and discipline).
 - **`teams/<team>/`** — per-manager working state (`status.md`, `spec.md`, `plan.md`, `decisions.md`).
-- **`briefs/`** — rendered milestone briefs.
+- **`briefs/`** — rendered per-epic briefs, at the epic's two bookends (architecture brief at design-done, executive brief at merge).
 
 For durability beyond the local disk, the control plane is mirrored to a per-user orphan branch `scuba-state/<git-user-slug>` (per git email, so distinct users don't collide), pushed every heartbeat by a scribe the chief of staff dispatches. Recovery is: fetch, restore `.scuba/`, read the roadmap, and re-attach to each thread by its branch and last SHA.
 

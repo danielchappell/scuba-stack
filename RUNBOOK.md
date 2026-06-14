@@ -31,7 +31,7 @@ your-repo/              # per project — nothing required up front
   .scuba/               # the control plane — gitignored, visible on your branch, shared by all agents
     roadmap.md          # resume anchor: the state-of-the-world tree
     teams/<team>/       # per-manager state: status, spec, plan, decisions
-    briefs/             # rendered milestone briefs
+    briefs/             # rendered per-epic briefs (architecture brief at design-done, executive brief at merge)
 ```
 
 ## Running it

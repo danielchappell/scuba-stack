@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Executive Brief — Milestone 03</title>
+<title>Architecture Brief — &lt;epic&gt;</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -224,18 +224,18 @@
 </head>
 <body>
   <main class="doc">
-    <!-- MASTHEAD: swap eyebrow date/id, h1 milestone name, subtitle one-line thesis -->
+    <!-- MASTHEAD: eyebrow reads "architecture brief" at v1 (design-done) or "executive brief" at v2 (merge); h1 is "<epic> — <brief state>"; subtitle one-line thesis -->
     <header class="masthead">
       <div class="eyebrow label">
-        <span>Executive Brief</span><span class="dot"></span>
-        <span>Milestone 03</span><span class="dot"></span>
+        <span>Architecture Brief</span><span class="dot"></span>
+        <span>&lt;epic&gt; — &lt;brief state&gt;</span><span class="dot"></span>
         <span>Team Atlas</span>
       </div>
       <h1>Realtime Collaboration: Editing Core</h1>
       <p class="subtitle">First shared-editing vertical slice is built and in QA: two cursors, one document, conflict-free. This brief covers what it does for users and the sync architecture underneath it.</p>
     </header>
 
-    <!-- RIBBON: id / date / teams / overall status -->
+    <!-- RIBBON: id / date / teams / overall status. State differs by bookend: at v1 the status shows build-upcoming; at v2 it runs through merge. -->
     <div class="ribbon">
       <div class="cell"><span class="k label">Brief ID</span><span class="v">BRF-0030</span></div>
       <div class="cell"><span class="k label">Date</span><span class="v">2026-06-11</span></div>
@@ -243,7 +243,7 @@
       <div class="cell"><span class="k label">Status</span><span class="badge ok"><span class="pip"></span>On Track</span></div>
     </div>
 
-    <!-- GATE TRAIL: mark done / current / upcoming for this milestone -->
+    <!-- GATE TRAIL: mark done / current / upcoming for this epic. State differs by bookend: at v1 it stops at plan-done (build upcoming); at v2 it runs through review and merge. -->
     <section class="gates" aria-label="Lifecycle position">
       <div class="label">Lifecycle position</div>
       <div class="trail">
@@ -290,7 +290,7 @@
       </section>
     </div>
 
-    <!-- WHAT NEEDS YOU: the escalations a decision-maker must answer -->
+    <!-- WHAT NEEDS YOU: the escalations a decision-maker must answer. At v1 these are the open design calls; at v2, any residual decisions left after merge. -->
     <section class="needs">
       <div class="label">Needs your decision</div>
       <h3>Three calls before Review closes</h3>
@@ -327,7 +327,7 @@
 
     <footer>
       <span class="label">Compiled by Brief Specialist · Team Atlas</span>
-      <span class="label">Source: .scuba/briefs/m03 · roadmap rev 0030</span>
+      <span class="label">Source: .scuba/briefs/&lt;epic&gt;.html · roadmap rev 0030</span>
     </footer>
   </main>
 </body>

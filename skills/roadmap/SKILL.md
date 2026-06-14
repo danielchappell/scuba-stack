@@ -17,7 +17,7 @@ Orchestration state has to be visible to the human on their own branch and to a 
 
 - **Now active** — one or two lines per currently-moving thread: what's happening *right now*, each linking to its `status.md`. The human's at-a-glance status report.
 - **Decisions waiting on me** — pinned near the top; every open call that needs the user, one line each with a context link. Never bury a decision in the tree.
-- **Roadmap** — a **Mermaid `flowchart TD`** tree (renders as a real diagram on GitHub and in any mermaid-aware preview). Each node is a thread that `click`s through to its current artifact, and the artifacts chain forward — **spec → plan → executive brief**: the roadmap links to the spec, the spec to its plan, a finished thread to its brief.
+- **Roadmap** — a **Mermaid `flowchart TD`** tree (renders as a real diagram on GitHub and in any mermaid-aware preview). Each node is a thread that `click`s through to its current artifact, and the artifacts chain forward — **spec → plan → brief**: the roadmap links to the spec, the spec to its plan, and a **completed (✅) epic node `click`s through to its brief at `.scuba/briefs/<epic>.html`** (the v1 architecture brief written at design-done, updated to the v2 executive brief at merge — per `html-executive-brief`).
 
 ### The frame is frozen; only the threads vary
 
@@ -34,6 +34,8 @@ ID[<emoji> <label>]:::<stage>      +      click ID "<artifact-path>" "<hint>"
 ```
 
 where the emoji and `:::<stage>` always agree, from the fixed mapping (🟡 spec · 🔵 plan · 🟢 execution · 🔎 review · ⛔ blocked · ✅ done · 💤 parked). Same state of the world in, same markup out — so two sessions looking at the same threads produce the same file.
+
+**Surfacing the session's finished briefs.** Collect the session's completed epics in a **"Completed this session" grouping inside this same tree** — a `subgraph "Completed this session"` (or a sibling cluster) that holds the session's existing `:::done` nodes, each still clicking through to its `.scuba/briefs/<epic>.html`. This grouping is purely a tree-internal edit and is bound by the frozen frame: it **reuses the existing ✅ done stage and `done` class** (a `subgraph` is a Mermaid container, not a node shape and not a `classDef`), so it is **not** a fourth section, **not** a ninth `classDef` class, and **not** a change to `template.md`. The three section set and order, the eight-class `classDef` block, the header, and the caption stay byte-for-byte from the template.
 
 **The roadmap is the index, not the detail.** The per-thread recovery fields — branch, worktree, last commit SHA, next step, blocker — live in each thread's `teams/<team>/<thread>.status.md`, so the tree stays scannable while recovery still has every field it needs. Keep it for the human's glance: they read this instead of asking you.
 
@@ -52,6 +54,8 @@ The mirror is the **one write the chief of staff must grant scope for**: dispatc
 **Collision-safe and cold-start.** Create the orphan state branch if it's missing (cold start). **Never check the state branch out in the primary tree** — always the side worktree — so a many-worktree concurrent run can't wedge it: checking the state branch out in the primary tree empties the code index for every other agent reading there (eval N11). The side worktree is the only place the mirror is ever materialized.
 
 Recovery is a **re-dispatch, not a reconnect** — a killed worker can't be reattached. Fetch, restore `.scuba/` from the branch, read `roadmap.md`, and for each non-terminal thread: verify its worktree still exists and its branch head matches the recorded last SHA, then spawn a *fresh* worker in that thread's role with a mandate built from its `status.md` — goal, `next` step, worktree. (This is why every thread's status keeps a current `next`.) The exact git recipe is operator mechanics — see the repo's `RUNBOOK`/`CLAUDE.md`.
+
+**Brief lifecycle trim (not a timer).** A brief is surfaced only while its node is on the active roadmap (current epics plus the "Completed this session" grouping). On re-anchor — the next session, or done-work aging out during normal upkeep — completed nodes and their brief links drop off the active tree; the `.scuba/briefs/` file remains but is no longer pointed at. Un-surfaced is harmless: a brief nothing links to can't confuse the AI. File deletion is optional disk hygiene a scribe can sweep on request — never a timer; a skill has no clock.
 
 ## On first use
 
