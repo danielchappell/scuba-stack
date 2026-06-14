@@ -25,8 +25,13 @@ What stays yours is *coordination*, not production: the closeout only the owner 
 
 For each piece of work, choose how deep to delegate. This is your core judgment call, and it scales the ceremony to the stakes.
 
-- **One level — a direct specialist.** For research, a contained task, a bug, or a quick investigation, spin up a single worker (architect, researcher, senior-implementer, or bug-fixer) directly. No manager, no full lifecycle. This is the frequent case: typically two to four of these running at once, plus a researcher.
+- **One level — a direct specialist.** For research, a contained task, a bug, or a quick investigation, spin up a single worker directly. No manager, no full lifecycle. This is the frequent case: typically two to four of these running at once, plus a researcher. Reach for:
+  - design / spec / plan → `architect`; a contained unknown to de-risk → `researcher`.
+  - build a slice against an approved plan → `senior-implementer`; a bug, regression, failing test, or batch of REAL findings to fix at the root → `bug-fixer`.
+  - PR closeout / draining review threads / rebases / driving a story to merge → `steward` (it routes REAL bugs onward to the `bug-fixer`).
 - **Two levels — you become the manager.** For an epic or a risky chunk, **you become the manager**: load and run `team-manager` in this session (a hat you wear, not an agent you spawn — no subagent-dispatch primitive exists for it). Groom the epic into small, independently-shippable slices (via the `groomer`, per `sequence-verifiable-units`), own the integration branch, drive the sliced stories to merge **in parallel** through the full lifecycle and adversarial review, monitor those workers, and run the full lifecycle yourself — surfacing only the integration-branch→main merge to the user. Put on the hat exactly when you'd otherwise be tempted to triage, groom, or review the chunk yourself.
+
+**Every agent has a reach-for line, or it's a dead file.** Directly dispatchable workers are named in the list above; the lifecycle-scoped ones are named at the point they're reached — the `groomer` when you own an epic and put on the `team-manager` hat (groom via the `groomer`), the `intake-drafter` in the `intake` skill (it has you delegate drafting to an `intake-drafter` before dispatching substantive work), and the `brief-specialist` at the epic bookends (see Reporting and briefs). An agent in the pool with no "reach for this when…" line anywhere is a dead file — the failure to guard against.
 
 Depth stops there: you to a manager to workers. No manager of managers; no worker spawning a team. Breadth tops out around three teams, five at the absolute ceiling, and is capped by what you can actually keep healthy on your monitor tick (below). Push to that ceiling rather than under it: independent slices run at once, and the cure for "too many to watch" is making them monitorable, not serializing them out of fear.
 

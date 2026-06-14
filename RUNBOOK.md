@@ -21,7 +21,7 @@ Full install is in `INSTALL.md`; the short version:
 ```
 ~/.claude/              # user scope — installed once, shared by every project
   scuba.md              # the always-on pointer (imported by ~/.claude/CLAUDE.md)
-  agents/               # worker pool: architect, groomer, hunter, bug-fixer, senior-implementer,
+  agents/               # worker pool: architect, groomer, hunter, bug-fixer, steward, senior-implementer,
                         #   researcher, intake-drafter, brief-specialist, scribe
   skills/               # chief-of-staff/, team-manager/, ship-gate/, adversarial-review/, …
   .scuba-manifest       # internal: what the installer placed, for clean reinstall
@@ -77,14 +77,14 @@ Recovery after a lost session is a **re-dispatch, not a reconnect** — killed w
 
 ## Models
 
-Every worker runs on Opus: the architect, the groomer (slicing epics), the hunter (adversarial finding), the intake-drafter, the senior implementer (plan execution), the bug-fixer (root-cause repair), the researcher (gathering), the brief specialist (rendering), and the scribe (roadmap bookkeeping). Worker models are pinned in their agent files, so they're automatic. The chief of staff and managers are not pinned, because they run as the launched session and its teammates, so you must start the lead on Opus or the whole org silently drops with it.
+Every worker runs on Opus: the architect, the groomer (slicing epics), the hunter (adversarial finding), the intake-drafter, the senior implementer (plan execution), the bug-fixer (root-cause repair), the steward (PR-closeout disposition and merge), the researcher (gathering), the brief specialist (rendering), and the scribe (roadmap bookkeeping). Worker models are pinned in their agent files, so they're automatic. The chief of staff and managers are not pinned, because they run as the launched session and its teammates, so you must start the lead on Opus or the whole org silently drops with it.
 
 ## Cost and behavior notes
 
 - A three-team run costs several times a single session, and direct inter-agent messages bill per round trip. The control-plane-first coordination rule in `CLAUDE.md` is what keeps that down.
 - Idle teammates gray out and self-terminate to save tokens. The 15-minute heartbeat keeps your managers warm; if you want a team to stand down, just let it idle out.
 - Keep the quality bar in your opening briefing to the lead. It passes that standard down to every teammate, which is your main quality lever without micromanaging.
-- The `bug-fixer` owns PR-merge fixing and resolves its own external/PR threads, but the auto-permission mode may block the `gh` writes for *relayed* findings — ones that reached it via you rather than as part of its named task — judging them out-of-scope. Pre-approve `gh` PR-comment writes, or fold the findings into the bug-fixer's mandate, so it closes its own threads instead of routing every resolution back through you.
+- The `steward` owns PR closeout and resolves the external/PR threads it dispositions (the `bug-fixer` it routes a real bug to replies with the fixing commit; the steward resolves the thread). The auto-permission mode may block these `gh` writes for *relayed* findings — ones that reached the agent via you rather than as part of its named task — judging them out-of-scope. Pre-approve `gh` PR-comment writes, or fold the findings into the steward's (and bug-fixer's) mandate, so the threads close in closeout instead of routing every resolution back through you.
 - Closeout re-verifies state **live** against the current head — it paginates review threads to exhaustion, reads `mergeable` per-PR (the list endpoint returns a `null` cache-miss), and pins "clean" to the head SHA, never to a cached count (per `ship-gate`; the `gh`/GraphQL commands are in the project `CLAUDE.md`).
 
 ## Shutdown
