@@ -24,8 +24,9 @@ There is no linter or test configured. `install.sh` uses `set -euo pipefail`.
 1. Reads the previous manifest (`~/.claude/.scuba-manifest`) and removes exactly the skills/agents it installed last time. This is the *only* way renamed or deleted skills get cleaned up — without the manifest, stale files would linger.
 2. Globs `skills/*/` and `agents/*.md`, copies each into `~/.claude`, and writes the new manifest. **New skills and agents are auto-discovered by these globs — no registration step exists or is needed.** A skill is a directory; an agent is a single `.md` file.
 3. Installs `global-CLAUDE.md` as `~/.claude/scuba.md` and ensures `~/.claude/CLAUDE.md` contains the single import line `@~/.claude/scuba.md`. This is **append-only**: it adds the line once if absent and never overwrites the user's file, backing it up to `~/.claude/CLAUDE.md.scuba-bak.<timestamp>` before that single edit.
+4. Copies `hooks/*` to `~/.claude/hooks/` (made executable, manifest-tracked as `hook:<name>`; test fixtures `test-*` stay in the repo and are not installed) and merges the one enforcement-hook entry into `~/.claude/settings.json`'s `.hooks.PreToolUse`. The settings merge is **surgical and idempotent**: it reads `.hooks.PreToolUse // []`, filters out any prior scuba entry, appends the canonical one, and writes back via **temp-then-`mv`** (never `jq … settings.json > settings.json`, which would truncate the file) — every other settings key is preserved, the file is backed up before the first edit, and a re-run replaces rather than duplicates. It is jq-gated: if `jq` is absent the script is still copied but the merge (and its inverse cleanup) are skipped symmetrically and the literal JSON to paste is printed. The `settings-hook:` manifest line is recorded whenever the script is on disk so cleanup stays reconcilable.
 
-Implication: to add a capability, add a `skills/<name>/SKILL.md` folder or an `agents/<name>.md` file — the installer picks it up. To rename or remove one, do it here and re-run the installer; the manifest handles cleanup on the *next* install.
+Implication: to add a capability, add a `skills/<name>/SKILL.md` folder, an `agents/<name>.md` file, or a `hooks/<name>` script — the installer picks it up. To rename or remove one, do it here and re-run the installer; the manifest handles cleanup on the *next* install.
 
 ## Architecture: the role hierarchy
 
@@ -35,7 +36,7 @@ The system is a layered org. Understanding it requires reading `global-CLAUDE.md
 - **Skills load lazily**: a skill's `description` frontmatter is always in context (it's the routing/trigger text); the body loads only when the skill is invoked.
 - **Roles**, top to bottom: the **chief of staff** (the single session the user talks to; dispatches, never builds/triages/reviews itself) → **team managers** (own a chunk end-to-end, spawn workers, run the review loop) → **workers** (the agents in `agents/`).
 - **State** lives in the shared `.scuba/` control plane in the primary working tree, with `.scuba/roadmap.md` as the resume anchor — never in transcripts, and never inside a worker's worktree (so it stays visible on the human's branch). Skills repeatedly enforce: read the roadmap, verify state from git/files, don't re-read history.
-- **Lifecycle**: `intake` (draft mandate → grill user) → spec → plan → build, with `adversarial-review` gating every spec/plan/code gate → `ship-gate` for PR/review → milestones rendered via `html-executive-brief`. `process-health-monitor` runs whenever background agents are live.
+- **Lifecycle**: `intake` (draft mandate → grill user) → spec → plan → build, with `adversarial-review` gating every spec/plan/code gate → `ship-gate` for PR/review → epic bookends rendered via `html-executive-brief`. `process-health-monitor` runs whenever background agents are live.
 
 ### Two families of skills
 
@@ -51,14 +52,15 @@ Each is a subagent type with `name`, `description`, `tools`, and a pinned `model
 - `hunter` (opus) — fresh independent adversarial finder; runs the touched tests in its own worktree (not read-only), enumerates the whole class with its shared root, returns CLEAN-or-findings, never fixes.
 - `intake-drafter` (opus) — drafts the mandate the chief of staff grills against.
 - `senior-implementer` (opus) — builds planned implementation against an approved plan.
-- `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); resolves its own external threads.
-- `researcher` (sonnet) — de-risks one specific unknown.
-- `brief-specialist` (sonnet) — renders the milestone brief from the control plane.
-- `scribe` (sonnet) — keeps `.scuba/roadmap.md` current so the chief of staff never blocks; reconciles status and runs the durability mirror; never writes code or decides.
+- `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); routed real bugs by the steward at the gate, replies with the fixing commit.
+- `steward` (opus) — owns PR closeout: rebases, paginates/triages review threads, resolves, re-verifies live, merges a cleared story to its integration branch; routes real bugs to the bug-fixer.
+- `researcher` (opus) — de-risks one specific unknown.
+- `brief-specialist` (opus) — renders the epic-bookend brief from the control plane.
+- `scribe` (opus) — keeps `.scuba/roadmap.md` current so the chief of staff never blocks; reconciles status and runs the durability mirror; never writes code or decides.
 
-### Model split (a load-bearing invariant)
+### Every worker runs on Opus (a load-bearing invariant)
 
-Anything that judges or writes code runs on **Opus** — chief of staff, managers, `architect`, `groomer`, `hunter`, `senior-implementer`, `bug-fixer`. Only the low-judgment support roles run on **Sonnet**: `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). Writing a fix or reconciling findings is judgment, not typing, so a cheaper tier there risks a tunnel-visioned bolt-on — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire judgment layer. Always start the lead session on Opus.
+Every worker agent runs on **Opus** — `architect`, `groomer`, `hunter`, `intake-drafter`, `senior-implementer`, `bug-fixer`, `steward`, `researcher`, `brief-specialist`, and `scribe`. Judgment and code-writing obviously demand it; the support roles (gathering, rendering, roadmap bookkeeping) run on Opus too, because a cheaper tier anywhere in the org risks a weaker read the rest of the system then has to catch — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. The `steward` owns PR closeout (disposition and logistics — rebase, thread triage, resolve, re-verify, merge) and routes the real bugs it finds to the `bug-fixer`; its disposition judgment is Opus work too. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire org. Always start the lead session on Opus.
 
 ## Conventions when editing
 

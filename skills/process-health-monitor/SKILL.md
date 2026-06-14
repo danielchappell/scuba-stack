@@ -13,13 +13,13 @@ While anything runs in the background, keep a poll alive on a roughly 10-minute 
 
 ## What to check each tick
 
-For every tracked process:
+For every tracked process, judged strongest signal first:
 
-- **Output mtime** — the file it writes to. Stale beyond ~12 minutes means investigate.
+- **Branch / PR state, both directions** — the primary liveness signal. Outbound: has the head SHA moved, did the PR update. **Inbound**: new external-reviewer rounds (read the review *bodies*, not just the count — a fresh round with unread findings is an open loop), mergeability, and commits-behind-base. An idle PR sitting on a waiting review round is a stall you caused, not progress.
 - **Durable artifacts** — the things it should have produced by now: git SHAs, written files, queue entries. Their presence is proof of life; their absence after enough time is a stall.
-- **Branch / PR state, both directions** — outbound: has the head moved, did the PR update. **Inbound**: new external-reviewer rounds (read the review *bodies*, not just the count — a fresh round with unread findings is an open loop), mergeability, and commits-behind-base. An idle PR sitting on a waiting review round is a stall you caused, not progress.
+- **Output mtime** — a weak, lagging corroborator, never a verdict on its own. It tracks the agent's *last emission to its transcript*, not its last work, so an agent deep in tool calls or parked waiting on an external reviewer can be fully alive while its `.output` file sits untouched for an hour. Expect identical stale timestamps across agents even for one that is live or already finished. Never declare a stall from mtime alone: corroborate against outbound git state first, and let git state win when the two disagree.
 
-Judge liveness from these, never from the presence or absence of a message. A transcript line such as an interruption notice is the tell that an agent was killed rather than finished.
+Judge liveness from these, strongest first, never from the presence or absence of a message. A transcript line such as an interruption notice is the tell that an agent was killed rather than finished.
 
 Fold what each tick finds into `.scuba/roadmap.md` so the state of the world stays current (per the `roadmap` skill): that file, plus each thread's branch and last SHA, is what a fresh session recovers from after a crash or a lost conversation. When keeping it current would block you, hand the update to a `scribe` rather than letting the roadmap drift. The tick also pushes the durability mirror to the per-user state branch (via a `scribe`), so a crash never costs more than one tick of off-machine state.
 

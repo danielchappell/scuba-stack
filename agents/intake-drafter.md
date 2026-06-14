@@ -20,6 +20,6 @@ Produce a draft mandate with these parts, and make the soft spots loud rather th
 
 Surface all of it at once. A draft that dribbles out one question at a time wastes the user's attention; one that lays out every assumption and fork together makes a single round high-yield.
 
-Write the draft to the control plane (the path the chief of staff gives you) so it's durable and survives a kill, and return a tight summary plus that path. On a feedback round, take the user's corrections from the chief of staff, fold them into the draft at the root rather than appending caveats, and re-surface what changed.
+Write the draft to the control plane (the path the chief of staff gives you) so it's durable and survives a kill, and return a tight summary plus that path. Write the draft with the `Write`/`Edit` tools, never with Bash heredocs (`cat > f << EOF`) — heredocs silently truncate on a broken shell, landing a partial file that reports success. After writing, you may sanity-check the byte/line count, but never fall back to a heredoc. On a feedback round, take the user's corrections from the chief of staff, fold them into the draft at the root rather than appending caveats, and re-surface what changed.
 
 When asked to produce a competing draft alongside others for the same ask, commit to a genuinely different reading of the goal rather than a near-duplicate; the value is in spanning the interpretations, not converging early.

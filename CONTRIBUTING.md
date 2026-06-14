@@ -13,6 +13,7 @@ global-CLAUDE.md          # the tiny always-on pointer — keep it short
 install.sh                # the installer (set -euo pipefail)
 skills/<name>/SKILL.md     # a skill is a directory
 agents/<name>.md          # an agent is a single file
+hooks/<name>.sh           # an enforcement hook (PreToolUse), wired via install.sh
 project-template/CLAUDE.md # per-project context template
 INSTALL.md, RUNBOOK.md    # operator docs — keep in sync with install.sh
 CLAUDE.md, ARCHITECTURE.md # repo guidance and design
@@ -32,7 +33,21 @@ A skill is a folder `skills/<name>/SKILL.md`:
 An agent is a single file `agents/<name>.md` with frontmatter `name`, `description`, `tools`, `model`:
 
 - The `description`'s "Use when…" drives dispatch.
-- `model` pins the worker's tier (Opus for judgment and code-writing, Sonnet for the low-judgment support roles like research and rendering — see [ARCHITECTURE.md](ARCHITECTURE.md#the-model-split)). The chief of staff and managers are intentionally unpinned.
+- `model` pins the worker's tier — **every worker runs on Opus** (see [ARCHITECTURE.md](ARCHITECTURE.md#every-worker-runs-on-opus)). The chief of staff and managers are intentionally unpinned (they inherit the session model).
+- **An agent with a governing skill must instruct itself to open and follow that skill as its first action** — referencing a skill by name is not enough to make it load. The always-loaded `description` is not the skill body; an agent that works from memory of a named skill never pulls the procedure where it actually lives. Make the governing skill a loud first-action invoke. For an agent whose skill use is conditional, force the one always-relevant skill and list the rest as a "consult when the work calls for it" menu, rather than loading a fixed list by ritual.
+- **An agent that produces a file deliverable must write it with the `Write`/`Edit` tools, never with Bash heredocs (`cat > f << EOF`).** Heredocs silently truncate on a broken shell, landing a partial file that reports success.
+- **Give it a reach-for line, or it's a dead file.** Every agent must be named at the point it's reached — directly dispatchable ones in the `chief-of-staff` dispatch list, lifecycle-scoped ones at the point in a skill where they're invoked (the `groomer` under the `team-manager` hat, the `intake-drafter` in `intake`, the `brief-specialist` at the epic bookends). An agent the orchestrator has no "reach for this when…" line for never gets dispatched; a defined-but-unrouted agent is the failure to guard against.
+
+## Adding or modifying a hook
+
+A hook is an executable script under `hooks/` that Claude Code runs at a tool lifecycle event (currently one `PreToolUse` guard, `scuba-guard.sh`):
+
+- Make it executable and commit it executable (`chmod +x`); the installer also re-chmods on copy.
+- Fail **open** on infrastructure gaps (missing `jq`, unreadable input): warn on stderr and `exit 0`. A guard that bricks every tool call on a missing dependency is worse than no guard. Containment denials themselves are **fail-loud** — name the resolved paths in the reason.
+- Deny by emitting the full `hookSpecificOutput` object (including `hookEventName`) and exiting 0 — not a bare `exit 2`, so the reason reaches the agent's context. Allow = exit 0 with no stdout.
+- Guard every command that can exit nonzero under the script's own `set -euo pipefail` (`jq` with `// default`, never `jq -e`; `git ls-files` in a captured-`if`; `realpath` only on existing paths). An unguarded nonzero exit aborts the hook before it decides — which fails open silently.
+- `install.sh` wires it: it copies `hooks/*` (skipping `test-*` fixtures), records `hook:<name>`, and for the enforcement hook merges one `.hooks.PreToolUse` entry into `~/.claude/settings.json` via **temp-then-`mv`** (never `jq f settings.json > settings.json`), idempotently and jq-gated. If you add a *new* hook that needs its own settings entry, follow that same temp-then-`mv` / symmetric-cleanup / `// []`-default discipline.
+- Ship a standalone fixture runner (`hooks/test-<name>.sh`) that pipes sample event JSON in and asserts the decisions, since hooks can't be self-tested in the session that edits them (they load at restart).
 
 ## The naming contract
 
@@ -61,9 +76,10 @@ Match the terse, essayistic voice of the existing skills. Skip diagrams-for-deco
 There's no automated suite, but before opening a PR:
 
 1. `bash -n install.sh` — syntax-check the installer if you touched it.
-2. `bash install.sh` — confirm it runs and prints the expected skill/agent counts.
-3. Restart your terminal and confirm the change is live (e.g. `/memory` shows the pointer; the skill/agent triggers as intended). Remember: edits here are inert in live sessions until reinstall + restart.
-4. If you changed installer behavior or the role model, update [INSTALL.md](INSTALL.md) and [RUNBOOK.md](RUNBOOK.md) in the same PR.
+2. `bash install.sh` — confirm it runs and prints the expected skill/agent/hook counts.
+3. If you touched a hook, `bash hooks/test-scuba-guard.sh` — confirm every allow/deny fixture passes.
+4. Restart your terminal and confirm the change is live (e.g. `/memory` shows the pointer; the skill/agent/hook triggers as intended). Remember: edits here are inert in live sessions until reinstall + restart.
+5. If you changed installer behavior or the role model, update [INSTALL.md](INSTALL.md) and [RUNBOOK.md](RUNBOOK.md) in the same PR.
 
 ## Pull requests
 
