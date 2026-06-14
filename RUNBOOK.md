@@ -52,18 +52,24 @@ your-repo/              # per project — nothing required up front
 
 All orchestration state lives in one shared `.scuba/` control plane in your primary working tree — `roadmap.md` (the resume anchor), `teams/<team>/`, and `briefs/`. Every agent writes there by absolute path, so you see every spec, plan, and brief on your own branch without checking out a worktree, and the chief of staff keeps `roadmap.md` current on its monitor tick (delegating to a `scribe` when a reconciliation would block it). `roadmap.md`'s tree is a Mermaid diagram — view it on GitHub or in a mermaid-aware markdown preview (e.g. the free "Markdown Preview Mermaid Support" extension in VS Code/Cursor); a plain previewer shows it as code.
 
-`.scuba/` is gitignored — the chief of staff makes it self-ignoring on first use (a `.scuba/.gitignore` of `*`) — so it never pollutes your code commits, and it survives a crash, an API outage, or an archived conversation because it's a real directory on disk. To survive losing the machine — and so distinct users (by git email) don't clobber each other's state — it's mirrored to a **per-user** orphan branch, pushed every heartbeat by a scribe the chief of staff dispatches:
+`.scuba/` is gitignored — the chief of staff makes it self-ignoring on first use (a `.scuba/.gitignore` of `*`) — so it never pollutes your code commits, and it survives a crash, an API outage, or an archived conversation because it's a real directory on disk. To survive losing the machine — and so distinct users (by git email) don't clobber each other's state — it's mirrored to a **per-user** orphan branch, pushed every heartbeat by a scribe the chief of staff dispatches. **Dispatch that scribe with git-write permission, never read-only** — a read-only scribe silently refuses the push and the off-machine copy goes stale. The state branch lives only in its **side worktree**; never check it out in the primary tree (that empties the code index for every other agent reading there). The recipe creates the orphan branch on first run (cold start):
 
 ```bash
 slug=$(git config user.email | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]/-/g')   # full email, sanitized (keeps the domain)
 [ -n "$slug" ] || { echo 'set a distinct git user.email first'; exit 1; }  # empty slug -> invalid ref name
-branch="scuba-state/$slug"; wt="../scuba-state-$slug"                       # per-user branch AND worktree dir
-[ -d "$wt" ] || git worktree add --orphan -b "$branch" "$wt"               # one-time; let it fail loud (git 2.42+)
+branch="scuba-state/$slug"; wt="../scuba-state-$slug"                       # per-user branch AND SIDE worktree dir — never check this branch out in the primary tree
+[ -d "$wt" ] || git worktree add --orphan -b "$branch" "$wt"               # cold start: create the orphan branch + side worktree once; let it fail loud (git 2.42+)
 rsync -a --delete .scuba/ "$wt/.scuba/"                                     # the scribe runs this each heartbeat
 git -C "$wt" add -f .scuba && git -C "$wt" commit -q -m "scuba state $(date -u +%FT%TZ)" && git -C "$wt" push -u origin "$branch"   # -f: .scuba/ is gitignored
+# verify the push landed — compare local mirror SHA against the remote; surface a loud blocker if it didn't
+local_sha=$(git -C "$wt" rev-parse HEAD)
+remote_sha=$(git ls-remote origin "$branch" | cut -f1)
+[ "$local_sha" = "$remote_sha" ] || echo "durability mirror NOT pushed — state is local-only (local $local_sha vs remote ${remote_sha:-none})"
 ```
 
-Older git (no worktree `--orphan`): make the orphan branch by hand once — a detached worktree, then `git checkout --orphan` — and run the same rsync/add/commit/push loop.
+If that last check prints `durability mirror NOT pushed — state is local-only`, the scribe surfaces it as a visible blocker in the roadmap's decisions section (never a footnote) and in its hand-off — a silently-stale mirror reads as durable and isn't.
+
+Older git (no worktree `--orphan`): make the orphan branch by hand once — a detached worktree, then `git checkout --orphan` — and run the same rsync/add/commit/push/verify loop.
 
 Recovery after a lost session is a **re-dispatch, not a reconnect** — killed workers can't be reattached. `git fetch`, restore `.scuba/` from your `scuba-state/<slug>` branch, open `roadmap.md`, and for each non-terminal thread: confirm its worktree still exists and its branch head matches the recorded last SHA, then spawn a *fresh* worker (in that node's role) with a mandate built from the node's goal, `next` step, and worktree. Treat the commands as a starting recipe — adapt to your git version and project.
 
