@@ -85,6 +85,7 @@ Every worker runs on Opus: the architect, the groomer (slicing epics), the hunte
 - Idle teammates gray out and self-terminate to save tokens. The 15-minute heartbeat keeps your managers warm; if you want a team to stand down, just let it idle out.
 - Keep the quality bar in your opening briefing to the lead. It passes that standard down to every teammate, which is your main quality lever without micromanaging.
 - The `bug-fixer` owns PR-merge fixing and resolves its own external/PR threads, but the auto-permission mode may block the `gh` writes for *relayed* findings — ones that reached it via you rather than as part of its named task — judging them out-of-scope. Pre-approve `gh` PR-comment writes, or fold the findings into the bug-fixer's mandate, so it closes its own threads instead of routing every resolution back through you.
+- Closeout re-verifies state **live** against the current head — it paginates review threads to exhaustion, reads `mergeable` per-PR (the list endpoint returns a `null` cache-miss), and pins "clean" to the head SHA, never to a cached count (per `ship-gate`; the `gh`/GraphQL commands are in the project `CLAUDE.md`).
 
 ## Shutdown
 

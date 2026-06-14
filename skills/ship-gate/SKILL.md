@@ -19,6 +19,8 @@ The point of the gate is to stop waiting. The external reviewer runs on its own 
 
 ## Done, and who merges
 
+The closeout re-verifies state **live against the current head** before declaring anything — never from a prior report's numbers. The principle: **verify live, paginate review threads to exhaustion, confirm `mergeable` per-PR (not from a list endpoint), pin "clean" to the current head SHA, and never trust a cached count.** A thread count that lands exactly on the page size is an early-stop in disguise; a `mergeable` read off the list endpoint is a cache-miss `null` waiting to be misread as "no conflicts"; and a "clean" verdict on a SHA the head has since moved past is stale. The gh/GraphQL commands that do this are project mechanics and stay out of this skill (per "Keep tooling out"); they live in the repo's `CLAUDE.md`.
+
 A PR passes the gate when the hunter swarm is CLEAN on the current tip, every real external finding is fixed or explicitly deferred with a stated reason, the suite has actually **run** green (not reasoned-correct), and the build matches the spec, plan, and definition of done. Until then it's in-flight, not done.
 
 Two kinds of PR, two merge rules:
