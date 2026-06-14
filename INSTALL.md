@@ -33,6 +33,13 @@ Add the flag to the `env` block of `~/.claude/settings.json`, then restart your 
 
 Requires Claude Code v2.1.32 or later (`claude --version`). Verify after restart with `echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (should print `1`).
 
+## Conflicting plugins (disable superpowers)
+Scuba Stack and the `superpowers` plugin are **mutually exclusive.** Superpowers injects a `using-superpowers` instruction whose `<SUBAGENT-STOP>` line tells every spawned subagent to skip skills, which makes Scuba Stack's skill library inert in your workers. Check whether it's enabled:
+
+    grep superpowers ~/.claude/settings.json
+
+If that prints a match, disable it before running Scuba Stack: set `enabledPlugins.superpowers@claude-plugins-official` to `false` in `~/.claude/settings.json` (or remove the plugin entirely), then restart your terminal.
+
 ## Verify
 Open Claude Code in a repo and run `/memory`. You should see `~/.claude/CLAUDE.md` loaded. The skills load their one-line descriptions automatically; their bodies load only when triggered.
 
