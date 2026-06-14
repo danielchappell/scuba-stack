@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Designs the spec and the technical approach for a mandate. Use when a team manager needs a spec drafted or a technical design produced before any code is written. Does not implement.
-tools: Read, Grep, Glob, Bash, Write, WebSearch, WebFetch
+tools: Read, Grep, Glob, Bash, Write, Edit, WebSearch, WebFetch
 model: opus
 ---
 
