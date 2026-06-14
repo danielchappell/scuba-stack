@@ -33,6 +33,7 @@ An agent is a single file `agents/<name>.md` with frontmatter `name`, `descripti
 
 - The `description`'s "Use when…" drives dispatch.
 - `model` pins the worker's tier — **every worker runs on Opus** (see [ARCHITECTURE.md](ARCHITECTURE.md#every-worker-runs-on-opus)). The chief of staff and managers are intentionally unpinned (they inherit the session model).
+- **Give it a reach-for line, or it's a dead file.** Every agent must be named at the point it's reached — directly dispatchable ones in the `chief-of-staff` dispatch list, lifecycle-scoped ones at the point in a skill where they're invoked (the `groomer` under the `team-manager` hat, the `intake-drafter` in `intake`, the `brief-specialist` at the epic bookends). An agent the orchestrator has no "reach for this when…" line for never gets dispatched; a defined-but-unrouted agent is the failure to guard against.
 
 ## The naming contract
 

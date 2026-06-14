@@ -118,13 +118,14 @@ Each agent is a single `.md` file defining a subagent type, with its model pinne
 | [`intake-drafter`](agents/intake-drafter.md) | Opus | Drafts the mandate the chief of staff grills you against |
 | [`senior-implementer`](agents/senior-implementer.md) | Opus | Builds planned implementation against an approved plan |
 | [`bug-fixer`](agents/bug-fixer.md) | Opus | Solves bugs and reconciles review/PR findings holistically: reproduce, root-cause, repair the system (not just the test) |
+| [`steward`](agents/steward.md) | Opus | Owns PR closeout: rebases, paginates/triages review threads, resolves, re-verifies, merges a cleared story to its integration branch; routes real bugs to the bug-fixer |
 | [`researcher`](agents/researcher.md) | Opus | De-risks one specific unknown |
 | [`brief-specialist`](agents/brief-specialist.md) | Opus | Renders the milestone executive brief from the control plane |
 | [`scribe`](agents/scribe.md) | Opus | Keeps the roadmap current so the chief of staff never blocks; runs the recovery mirror |
 
 ### Every worker runs on Opus (load-bearing)
 
-Every worker agent runs on **Opus**: `architect`, `groomer`, `hunter`, `intake-drafter`, `senior-implementer` (executing a plan), `bug-fixer` (independent root-cause work), `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). Judgment and code-writing demand it, and the support roles run on Opus too rather than risk a weaker read anywhere in the org. Worker models are pinned in their files. The chief of staff and managers are **not** pinned; they inherit the session model. So **always start the lead session on Opus**, or the whole org silently downgrades with it.
+Every worker agent runs on **Opus**: `architect`, `groomer`, `hunter`, `intake-drafter`, `senior-implementer` (executing a plan), `bug-fixer` (independent root-cause work), `steward` (PR-closeout disposition and merge), `researcher` (gathering), `brief-specialist` (rendering), and `scribe` (roadmap bookkeeping). Judgment and code-writing demand it, and the support roles run on Opus too rather than risk a weaker read anywhere in the org. Worker models are pinned in their files. The chief of staff and managers are **not** pinned; they inherit the session model. So **always start the lead session on Opus**, or the whole org silently downgrades with it.
 
 ---
 

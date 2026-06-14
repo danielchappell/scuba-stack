@@ -51,14 +51,15 @@ Each is a subagent type with `name`, `description`, `tools`, and a pinned `model
 - `hunter` (opus) — fresh independent adversarial finder; runs the touched tests in its own worktree (not read-only), enumerates the whole class with its shared root, returns CLEAN-or-findings, never fixes.
 - `intake-drafter` (opus) — drafts the mandate the chief of staff grills against.
 - `senior-implementer` (opus) — builds planned implementation against an approved plan.
-- `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); resolves its own external threads.
+- `bug-fixer` (opus) — solves bugs and reconciles review/PR findings holistically (root cause, not symptom); routed real bugs by the steward at the gate, replies with the fixing commit.
+- `steward` (opus) — owns PR closeout: rebases, paginates/triages review threads, resolves, re-verifies live, merges a cleared story to its integration branch; routes real bugs to the bug-fixer.
 - `researcher` (opus) — de-risks one specific unknown.
 - `brief-specialist` (opus) — renders the milestone brief from the control plane.
 - `scribe` (opus) — keeps `.scuba/roadmap.md` current so the chief of staff never blocks; reconciles status and runs the durability mirror; never writes code or decides.
 
 ### Every worker runs on Opus (a load-bearing invariant)
 
-Every worker agent runs on **Opus** — `architect`, `groomer`, `hunter`, `intake-drafter`, `senior-implementer`, `bug-fixer`, `researcher`, `brief-specialist`, and `scribe`. Judgment and code-writing obviously demand it; the support roles (gathering, rendering, roadmap bookkeeping) run on Opus too, because a cheaper tier anywhere in the org risks a weaker read the rest of the system then has to catch — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire org. Always start the lead session on Opus.
+Every worker agent runs on **Opus** — `architect`, `groomer`, `hunter`, `intake-drafter`, `senior-implementer`, `bug-fixer`, `steward`, `researcher`, `brief-specialist`, and `scribe`. Judgment and code-writing obviously demand it; the support roles (gathering, rendering, roadmap bookkeeping) run on Opus too, because a cheaper tier anywhere in the org risks a weaker read the rest of the system then has to catch — not a trade worth making. The two code-writers split by posture: `senior-implementer` executes an approved plan; `bug-fixer` investigates and repairs holistically. The `steward` owns PR closeout (disposition and logistics — rebase, thread triage, resolve, re-verify, merge) and routes the real bugs it finds to the `bug-fixer`; its disposition judgment is Opus work too. Worker models are pinned in agent frontmatter. **The chief of staff and managers are deliberately *not* pinned** — they run as the launched session and its teammates, inheriting the session model. Launching the lead on Sonnet silently downgrades the entire org. Always start the lead session on Opus.
 
 ## Conventions when editing
 
