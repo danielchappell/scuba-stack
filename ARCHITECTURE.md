@@ -96,6 +96,8 @@ A skill is a folder with a `SKILL.md` whose frontmatter is just `name` + `descri
 
 The surgical, append-only design is what makes the installer safe to drop into an existing `~/.claude` that already has the user's own skills, agents, and personal `CLAUDE.md`.
 
+It also copies a `hooks/` directory and merges a single `PreToolUse` entry into `~/.claude/settings.json` (the one place the installer touches that file, via temp-then-`mv` so every other key is preserved, manifest-tracked for symmetric cleanup). This turns two rules that were previously convention — keep code writes inside the agent's own worktree, and never open a draft PR — into a **lever**: an enforcement hook that denies the violating tool call rather than trusting every agent to remember the rule.
+
 ## Costs and limits
 
 - A three-team run costs several times a single session, and direct inter-agent messages bill per round trip. The control-plane-first coordination rule is the main cost control.
