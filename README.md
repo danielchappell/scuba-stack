@@ -61,10 +61,10 @@ flowchart TD
     M2 --> W5[Worker]
 ```
 
-Depth stops at three levels: **you → chief of staff → manager → workers**. No manager of managers, and no worker spawns a team. Breadth is capped by what the lead can health-check on each monitoring tick, not by ambition.
+This is the **scaling shape**. Depth stops at three levels: **you → chief of staff → manager → workers**. No manager of managers, and no worker spawns a team. Breadth is capped by what the lead can health-check on each monitoring tick, not by ambition. At current scale the chief of staff wears the manager hat itself for an epic; the spawned teammate manager in the diagram is the scaling path for when one session can no longer hold every epic at once.
 
 - **Chief of staff**: the single session you talk to. Picks the dispatch depth (a direct worker for a contained task, an autonomous manager for a big chunk), keeps a re-arming health poll on everything running, and brings you decisions one at a time. Stays free.
-- **Team manager**: owns one chunk end-to-end. Grooms the epic into slices, drives them to merge in parallel (one writer per branch) onto an integration branch, runs the review loop, monitors its own workers, and reports up. Never talks to you directly, only to the chief of staff.
+- **Team manager**: owns one chunk end-to-end. Grooms the epic into slices, drives them to merge in parallel (one writer per branch) onto an integration branch, runs the review loop, and monitors its own workers. At current scale the chief of staff runs the manager role itself (a hat it wears, per `team-manager`); a spawned teammate manager is the scaling path.
 - **Workers**: the ephemeral agents that do the actual work and then terminate.
 
 ### The lifecycle
