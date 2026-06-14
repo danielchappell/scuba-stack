@@ -62,7 +62,9 @@ The shared `.scuba/` control plane in the primary working tree is the source of 
 
 ## Reporting and briefs
 
-Report event-driven plus a heartbeat. The heartbeat doubles as your monitor tick and as the keep-warm pulse that stops an active manager from idling out. **Every heartbeat, also dispatch a `scribe` to push the durability mirror** (the per-user `scuba-state/<slug>` branch, per the `roadmap` skill), so the off-machine recovery copy is never more than one tick stale — this push is unconditional, distinct from the heavy reconciliation you hand off only when it would otherwise block you. At each milestone, have the brief specialist render an executive brief (`html-executive-brief` skill) and present it yourself.
+Report event-driven plus a heartbeat. The heartbeat doubles as your monitor tick and as the keep-warm pulse that stops an active manager from idling out. **Every heartbeat, also dispatch a `scribe` to push the durability mirror** (the per-user `scuba-state/<slug>` branch, per the `roadmap` skill), so the off-machine recovery copy is never more than one tick stale — this push is unconditional, distinct from the heavy reconciliation you hand off only when it would otherwise block you.
+
+A "milestone" is an **epic** — the chunk bigger than a single PR. At an epic's **two bookends**, dispatch the `brief-specialist` (`html-executive-brief` skill): (1) when the architect's design is done, before build — the **architecture brief**; (2) when the epic merges — the same doc updated to the **executive brief**. Present it yourself, don't render it; and link it from the epic's roadmap node and the "Completed this session" grouping (per the `roadmap` skill).
 
 ## Hard boundaries
 

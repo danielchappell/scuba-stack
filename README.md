@@ -100,7 +100,7 @@ A skill is a folder with a `SKILL.md`. Its `description` is always in context (i
 | [`process-health-monitor`](skills/process-health-monitor/SKILL.md) | Keep delegated background work alive; detect stalls and deaths |
 | [`roadmap`](skills/roadmap/SKILL.md) | The state-of-the-world tree the chief of staff keeps current and recovers from |
 | [`arena`](skills/arena/SKILL.md) | Race several independent attempts at a genuinely uncertain design |
-| [`html-executive-brief`](skills/html-executive-brief/SKILL.md) | Render the milestone brief the chief of staff presents to you |
+| [`html-executive-brief`](skills/html-executive-brief/SKILL.md) | Render an epic's bookend brief (architecture brief at design-done, executive brief at merge) the chief of staff presents to you |
 
 **Engineering-principle skills (the "how to think" library the org references):**
 
@@ -119,7 +119,7 @@ Each agent is a single `.md` file defining a subagent type, with its model pinne
 | [`senior-implementer`](agents/senior-implementer.md) | Opus | Builds planned implementation against an approved plan |
 | [`bug-fixer`](agents/bug-fixer.md) | Opus | Solves bugs and reconciles review/PR findings holistically: reproduce, root-cause, repair the system (not just the test) |
 | [`researcher`](agents/researcher.md) | Opus | De-risks one specific unknown |
-| [`brief-specialist`](agents/brief-specialist.md) | Opus | Renders the milestone executive brief from the control plane |
+| [`brief-specialist`](agents/brief-specialist.md) | Opus | Renders an epic's bookend brief from the control plane (architecture brief at design-done, executive brief at merge) |
 | [`scribe`](agents/scribe.md) | Opus | Keeps the roadmap current so the chief of staff never blocks; runs the recovery mirror |
 
 ### Every worker runs on Opus (load-bearing)
@@ -137,10 +137,10 @@ your-repo/
   .scuba/                # the control plane: gitignored, visible on your branch, not in any worktree
     roadmap.md           # resume anchor: a Mermaid tree of every thread; nodes link to spec/plan/brief
     teams/<team>/        # per-manager state: status, spec, plan, decisions
-    briefs/              # rendered milestone briefs
+    briefs/              # rendered per-epic briefs (architecture brief at design-done, executive brief at merge)
 ```
 
-`roadmap.md` is the source of truth: a Mermaid tree of every in-flight thread and its stage, a "now active" digest, and the decisions waiting on you. Each node links to its artifacts (spec → plan → executive brief). The per-thread recovery detail (branch, worktree, last SHA, next step) lives in its `status.md`. The chief of staff reads it first and keeps it current on its monitor tick, delegating to a `scribe` rather than blocking. For recovery beyond the local disk, the control plane is mirrored to a per-user branch `scuba-state/<you>` (namespaced by your git email, so distinct users don't clobber each other's state) and pushed every heartbeat. So after a crash, an API outage, or an archived conversation, you fetch, restore `.scuba/`, and pick every agent back up where it left off.
+`roadmap.md` is the source of truth: a Mermaid tree of every in-flight thread and its stage, a "now active" digest, and the decisions waiting on you. Each node links to its artifacts (spec → plan → brief), and a completed epic's node links to its bookend brief. The per-thread recovery detail (branch, worktree, last SHA, next step) lives in its `status.md`. The chief of staff reads it first and keeps it current on its monitor tick, delegating to a `scribe` rather than blocking. For recovery beyond the local disk, the control plane is mirrored to a per-user branch `scuba-state/<you>` (namespaced by your git email, so distinct users don't clobber each other's state) and pushed every heartbeat. So after a crash, an API outage, or an archived conversation, you fetch, restore `.scuba/`, and pick every agent back up where it left off.
 
 ---
 
