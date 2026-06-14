@@ -37,6 +37,8 @@ where the emoji and `:::<stage>` always agree, from the fixed mapping (🟡 spec
 
 **The roadmap is the index, not the detail.** The per-thread recovery fields — branch, worktree, last commit SHA, next step, blocker — live in each thread's `teams/<team>/<thread>.status.md`, so the tree stays scannable while recovery still has every field it needs. Keep it for the human's glance: they read this instead of asking you.
 
+Write the roadmap (and the mirror) with the `Write`/`Edit` tools, never with Bash heredocs (`cat > f << EOF`): a heredoc silently truncates on a broken shell, landing a partial roadmap that reports success.
+
 ## The chief of staff owns it; never blocks on it
 
 The chief of staff keeps the roadmap current as part of the monitor tick it already runs (per `process-health-monitor`): read each thread's real state from git and files, fold it into the tree. That's cheap and not extra blocking. When a pass is heavy — reconciling many agents' statuses into the tree, or running the durability mirror — it dispatches a `scribe` to do the typing while it stays free. It owns the roadmap's correctness whether it updates it itself or delegates; it never lets the roadmap go stale and never blocks on keeping it fresh.

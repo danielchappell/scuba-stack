@@ -42,7 +42,7 @@ Work through the template's HTML comments. The swap points are: the masthead (ey
 
 ## Output
 
-Write the finished brief to `.scuba/briefs/<milestone>.html` as a single self-contained file (fonts via CDN, no external assets), then hand the path to the chief of staff to present. Do not present it to the user yourself; that's the chief of staff's job.
+Write the finished brief to `.scuba/briefs/<milestone>.html` as a single self-contained file (fonts via CDN, no external assets), then hand the path to the chief of staff to present. Do not present it to the user yourself; that's the chief of staff's job. Write the brief with the `Write`/`Edit` tools, never with Bash heredocs (`cat > f << EOF`) — a heredoc silently truncates on a broken shell, landing a partial brief that reports success.
 
 ## Anti-patterns
 

@@ -33,6 +33,7 @@ An agent is a single file `agents/<name>.md` with frontmatter `name`, `descripti
 
 - The `description`'s "Use when…" drives dispatch.
 - `model` pins the worker's tier — **every worker runs on Opus** (see [ARCHITECTURE.md](ARCHITECTURE.md#every-worker-runs-on-opus)). The chief of staff and managers are intentionally unpinned (they inherit the session model).
+- **An agent that produces a file deliverable must write it with the `Write`/`Edit` tools, never with Bash heredocs (`cat > f << EOF`).** Heredocs silently truncate on a broken shell, landing a partial file that reports success.
 
 ## The naming contract
 
