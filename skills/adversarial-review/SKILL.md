@@ -33,6 +33,8 @@ At the PR gate, don't serialize against it: open the PR to start the external re
 
 When a finding is fixed, prove the fix: write the test, see it RED, apply the fix, see it GREEN, then revert the fix and confirm it goes RED again before restoring. A test that passes without the fix proves nothing. Pin the test to the behavior or invariant that must hold, not to the specific patch, so the test survives a holistic refactor instead of locking a bolt-on in. Red, green, then refactor; the refactor step is where the change is integrated, and it is not optional.
 
+A fix a hunter prescribes is a **hypothesis, not an order** — the fixer owns and re-derives it, and verifies the *direction* against the invariant before applying. Pinning the test to the invariant (not to the hunter's patch) is precisely what catches a wrong-direction prescription: a fix that fails open passes against its own patch but goes RED against the invariant that must hold.
+
 ## Scale to the stakes
 
 This full machinery is for risky work: anything touching isolation, security, contracts, or data. A one-line config fix does not earn three adversarial hunters. Match the number and depth of lenses to the blast radius; over-gating low-risk work stalls the forward motion that matters as surely as under-reviewing risky work breaks it.
