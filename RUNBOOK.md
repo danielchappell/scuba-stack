@@ -11,9 +11,10 @@ Full install is in `INSTALL.md`; the short version:
    ```json
    { "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" } }
    ```
-3. **Nothing to create per repo.** The chief of staff initializes the `.scuba/` control plane (`roadmap.md`, `teams/`, `briefs/`) itself the first time you use the org in a repo. Optionally add project specifics (stack, paths, commands) to that repo's own `CLAUDE.md`.
-4. **Pre-approve permissions.** Teammates inherit the lead's permission mode at spawn and their prompts bubble up to the lead, which creates friction in an always-running org. Pre-approve the common operations before spawning, and use the **default** permission mode, not delegate mode (delegate mode passes its restrictions to teammates and leaves them unable to work). For low-risk runs you can launch with `--dangerously-skip-permissions`, but only when you mean it.
-5. **(Optional) Split-pane view.** Default in-process mode works in any terminal. For a pane per teammate, run inside tmux or iTerm2: `claude --teammate-mode tmux`. Split-pane isn't supported in the VS Code integrated terminal.
+3. **Disable conflicting plugins.** If the `superpowers` plugin is enabled it makes this org's skills inert in workers — disable it before running. See the [conflicting-plugins step in `INSTALL.md`](INSTALL.md#conflicting-plugins-disable-superpowers).
+4. **Nothing to create per repo.** The chief of staff initializes the `.scuba/` control plane (`roadmap.md`, `teams/`, `briefs/`) itself the first time you use the org in a repo. Optionally add project specifics (stack, paths, commands) to that repo's own `CLAUDE.md`.
+5. **Pre-approve permissions.** Teammates inherit the lead's permission mode at spawn and their prompts bubble up to the lead, which creates friction in an always-running org. Pre-approve the common operations before spawning, and use the **default** permission mode, not delegate mode (delegate mode passes its restrictions to teammates and leaves them unable to work). For low-risk runs you can launch with `--dangerously-skip-permissions`, but only when you mean it.
+6. **(Optional) Split-pane view.** Default in-process mode works in any terminal. For a pane per teammate, run inside tmux or iTerm2: `claude --teammate-mode tmux`. Split-pane isn't supported in the VS Code integrated terminal.
 
 ## Directory layout
 

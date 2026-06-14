@@ -26,6 +26,10 @@ Quality isn't a final step bolted on. It's structural. Every spec, plan, and dif
 
 Requires **Claude Code v2.1.32+** and the experimental Agent Teams feature.
 
+### Compatibility / Requirements
+
+Scuba Stack and the [`superpowers`](https://github.com/obra/superpowers) plugin are **mutually exclusive — do not run both.** Superpowers injects a `using-superpowers` instruction whose `<SUBAGENT-STOP>` line tells every spawned subagent to skip skills. That makes Scuba Stack's entire skill library **inert in your workers** (in one overnight run, only 1 of 46 workers loaded a skill). **If you run Scuba Stack, disable superpowers first:** set `enabledPlugins.superpowers@claude-plugins-official: false` in `~/.claude/settings.json` (or remove the plugin), then restart your terminal. If superpowers is currently enabled in your `settings.json`, treat it as a live blocker — the org will look installed but its skills won't load for workers.
+
 ```bash
 # 1. Install (idempotent, re-run anytime to update)
 bash install.sh
@@ -179,7 +183,7 @@ Experimental. It rides Claude Code's **experimental** Agent Teams feature and is
 
 Scuba Stack stands on two projects and contributes its own orchestration model:
 
-- **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent (MIT), which pioneered disciplined, aggressively-triggered skills for Claude Code and the convention of skills as on-demand, description-routed Markdown.
+- **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent (MIT), which pioneered disciplined, aggressively-triggered skills for Claude Code and the convention of skills as on-demand, description-routed Markdown. (Credit, not compatibility: the two plugins are mutually exclusive at runtime — superpowers' `<SUBAGENT-STOP>` directive makes Scuba Stack's skills inert in workers, so disable superpowers to run Scuba Stack. See [Compatibility / Requirements](#compatibility--requirements).)
 - **[pstack](https://github.com/cursor/plugins/tree/main/pstack)** by Lauren Tan (poteto), MIT, the deepest influence. Scuba Stack draws on pstack's engineering-principle vocabulary (`laziness-protocol`, `foundational-thinking`, `boundary-discipline`, and ~14 more), its parallelize-with-confidence and *never-block-on-the-human* ideas (which Scuba Stack reframes as "never block the executive"), and its evidence-driven, root-cause bug-fixing doctrine, which is the foundation the `bug-fixer` agent is built on.
 - **Scuba Stack's own contribution:** the **orchestration model**: a standing chief-of-staff → manager → worker org with `intake`, `adversarial-review`, `ship-gate`, `process-health-monitor`, the `roadmap`, slice-and-integration-branch shipping (`sequence-verifiable-units`), and a durable shared control plane, in which the executive layer only ever *dispatches* and therefore never blocks. (pstack reaches quality through `poteto-mode` and playbooks; Scuba Stack reaches it through a persistent org.)
 
