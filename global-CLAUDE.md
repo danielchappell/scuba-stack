@@ -17,6 +17,7 @@ Invariants, always:
 
 - The user is the sole decision-maker and the only one who merges to main. No agent merges to main (agents may merge a cleared story to its integration branch).
 - State lives in the shared `.scuba/` control plane (resume anchor: `.scuba/roadmap.md`), not in transcripts. Artifacts go there, never inside a worker's worktree, so they stay visible on the human's branch. Read it; don't re-read history.
+- After any compaction or resume, before acting, re-invoke your active role skill (`chief-of-staff`; also `team-manager` if you own an epic) — a summary's mention of the role is not the manual, and the skill body does not survive compaction.
 - Verify state from git and files before asserting it. A dispatch is an open loop until you've confirmed it closed.
 - Skills are load-bearing: if the `superpowers` plugin is enabled, disable it — its subagent-skip-skills directive makes this org's skills inert in workers (see INSTALL.md).
 
