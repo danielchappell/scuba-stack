@@ -1,6 +1,6 @@
 ---
 name: systematic-debugging
-description: Method for finding the cause of a bug, failing test, regression, or unexplained symptom whose cause is unknown. Use when something is broken and you don't yet know why — reproduce it, narrow by halving, instrument and read live state, and repair the root rather than silencing the symptom. Not for executing an approved plan (that's the senior-implementer's path) — this is the discipline for the unknown.
+description: Method for finding the cause of a bug, failing test, regression, or unexplained symptom whose cause is unknown. Use when something is broken and you don't yet know why — reproduce it, narrow by halving, instrument and read live state, and repair the root rather than silencing the symptom. Not for plan-writing or building features to a known design — but a senior-implementer whose own fresh build breaks reaches for this; it is the discipline for the unknown.
 ---
 
 # Systematic Debugging
