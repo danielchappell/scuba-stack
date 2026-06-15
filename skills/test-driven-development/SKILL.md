@@ -28,4 +28,4 @@ The RED → GREEN discipline — see it fail for the right reason, make it pass,
 
 ## Test the behavior, not the code
 
-Per `integrate-dont-bolt-on`: pin the test to the invariant or contract that must hold, not to the specific lines you're about to write. A test bound to the implementation locks today's shape in and fights tomorrow's refactor; a test bound to the behavior survives the refactor and still proves correctness. Red, green, then refactor — the refactor step is where the change is integrated, and it is not optional.
+Per `integrate-dont-bolt-on`: pin the test to the invariant or contract that must hold, not to the specific lines you're about to write. A test bound to the implementation locks today's shape in and fights tomorrow's refactor; a test bound to the behavior survives the refactor and still proves correctness.
