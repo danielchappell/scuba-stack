@@ -33,7 +33,13 @@ At the PR gate, don't serialize against it: open the PR to start the external re
 
 When a finding is fixed, prove the fix: write the test, see it RED, apply the fix, see it GREEN, then revert the fix and confirm it goes RED again before restoring. A test that passes without the fix proves nothing. Pin the test to the behavior or invariant that must hold, not to the specific patch, so the test survives a holistic refactor instead of locking a bolt-on in. Red, green, then refactor; the refactor step is where the change is integrated, and it is not optional.
 
-A fix a hunter prescribes is a **hypothesis, not an order** — the fixer owns and re-derives it, and verifies the *direction* against the invariant before applying. Pinning the test to the invariant (not to the hunter's patch) is precisely what catches a wrong-direction prescription: a fix that fails open passes against its own patch but goes RED against the invariant that must hold.
+## Receiving a finding
+
+A finding handed to you — a hunter's report, a review comment, an external reviewer's prescribed patch — is a **hypothesis, not an order**. This is the posture every receiver of a finding holds, named once here and reached for by name. Before you implement it:
+
+- **Verify it's real.** Classify it REAL / DEFERRED / INVALID against the actual code first. Some findings are stale, wrong, or already handled; don't act on a finding you haven't confirmed against the head.
+- **Own the fix direction.** Re-derive the fix at the root yourself (per `integrate-dont-bolt-on`); take any prescribed patch as a lead to test, not a conclusion to install. Verify the *direction* against the invariant before applying — pinning the test to the invariant (not to the prescribed patch) is precisely what catches a wrong-direction prescription: a fix that fails open passes against its own patch but goes RED against the invariant that must hold.
+- **Push back with evidence, don't perform agreement.** When a finding is wrong or its prescribed direction would regress the invariant, say so and show why. Silent compliance with a bad prescription is a defect, not deference.
 
 ## Scale to the stakes
 
