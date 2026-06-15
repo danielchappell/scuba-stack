@@ -31,6 +31,8 @@ Hunters are a separate class and don't write product code. At a gate, spawn a pa
 
 ## Delegate AND monitor
 
+Dispatch your long-lived and parallel workers in the dispatch tool's **background mode** (the non-blocking dispatch — `run_in_background` where the tool exposes that flag; anchor on the intent, non-blocking dispatch, so a flag rename can't silently no-op the fix). A blocking dispatch freezes you: you can't run slices in parallel and the re-arming poll below never gets a turn — so background dispatch is precisely what makes the monitor tick possible. Reserve **foreground** for the one narrow case where a short helper's result gates your literal next step (e.g. an `intake-drafter` whose draft you grill against immediately); the architect, senior-implementers, bug-fixers, hunter panel, researcher, and scribe all run background. This fixes the lockup / can't-talk / no-parallelism cluster; it does **not** make a worker survive Esc — in-session background tasks are session-owned and die with the session, so true Esc-survival is a separate, parked concern, not claimed here.
+
 Never dispatch and forget. While your workers run, keep a re-arming poll (~10 minutes) that health-checks each one by git SHA, file mtime, and durable artifacts, per the `process-health-monitor` skill. Verify liveness from what they've produced, never from a completion message, because a killed worker sends none. A dispatch is an open loop until you confirm it closed. Don't run more workers than you can health-check on the tick.
 
 ## Verify, don't assert
