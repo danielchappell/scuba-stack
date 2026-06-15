@@ -45,6 +45,8 @@ Every dispatch carries the full briefing so the agent never comes back for basic
 
 ## Delegate AND monitor
 
+Dispatch long-lived or parallel workers in the dispatch tool's **background mode** (the non-blocking dispatch — `run_in_background` where the tool exposes that flag; the intent is what matters, so name it as non-blocking dispatch and a flag rename can't silently no-op the fix). A blocking dispatch freezes your thread: the user can't reach you, nothing else runs in parallel, and the re-arming poll below never gets a turn to run — so background dispatch is what makes monitoring possible at all. Reserve **foreground** for the one narrow case where a short helper's result gates your literal next step — the `intake-drafter`, whose draft you grill against immediately, is the canonical example; every other dispatch (architect, senior-implementer, bug-fixer, steward, hunter swarm, researcher, scribe) is background. Background dispatch fixes the lockup / can't-talk / no-parallelism cluster; it does **not** make workers survive Esc — in-session background tasks are owned by the session and die when it does, so true Esc-survival is a separate, parked concern, not something to claim here.
+
 Delegating without monitoring is how work silently dies. While anything runs, keep a re-arming poll alive (roughly every 10 minutes) that health-checks *every* running agent by what it has actually produced: git SHAs, file mtimes, durable artifacts, branch/PR state. Verify liveness from those, never from the presence or absence of a completion message: a killed or interrupted agent sends no notification. A dispatch or re-trigger is an open loop until you have confirmed it closed. Don't fan out wider than you can keep healthy on that tick.
 
 ## Verify, don't assert
