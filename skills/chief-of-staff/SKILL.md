@@ -25,13 +25,18 @@ What stays yours is *coordination*, not production: the closeout only the owner 
 
 For each piece of work, choose how deep to delegate. This is your core judgment call, and it scales the ceremony to the stakes.
 
-- **One level — a direct specialist.** For research, a contained task, a bug, or a quick investigation, spin up a single worker directly. No manager, no full lifecycle. This is the frequent case: typically two to four of these running at once, plus a researcher. Reach for:
+- **Tiny** means a mechanical docs/config/edit-only change with obvious scope, no behavior risk, and no meaningful test surface. Handle it directly or with one direct specialist; still verify the edited file.
+- **Light** means a contained bug fix, research question, or narrow change with a clear root, local blast radius, and no security/isolation, data/contracts, migration, money, auth, public API, broad refactor, repeated-failure, or unclear-root-cause trigger. A normal contained bug fix starts here. Use a direct specialist and the `light` review profile.
+- **Substantive** means behavior/design work that needs a spec, a plan, or acceptance criteria before it is safe to build. It follows the full lifecycle below, even if it is expected to become one PR. The only lifecycle step a single-PR substantive chunk skips is grooming into multiple slices.
+- **High-risk** means any work touching security/isolation, auth, money, data/contracts, migrations, public APIs, broad refactors, repeated failures, unclear root cause, or high-blast operational behavior. It follows the full lifecycle and uses the `high-risk` review profile.
+
+- **One level — a direct specialist.** For research, a tiny/light contained task, a contained bug, or a quick investigation, spin up a single worker directly. No manager, no full lifecycle. This is the frequent case: typically two to four of these running at once, plus a researcher. Reach for:
   - design / spec / plan → `architect`; a contained unknown to de-risk → `researcher`.
   - build a slice against an approved plan → `senior-implementer`; a bug, regression, failing test, or batch of REAL findings to fix at the root → `bug-fixer`.
   - PR closeout / draining review threads / rebases / driving a story to merge → `steward` (it routes REAL bugs onward to the `bug-fixer`).
-- **Two levels — you become the manager.** For an epic or a risky chunk, **you become the manager**: load and run `team-manager` in this session (a hat you wear, not an agent you spawn — no subagent-dispatch primitive exists for it). Groom the epic into small, independently-shippable slices (via the `groomer`, per `sequence-verifiable-units`), own the integration branch, drive the sliced stories to merge **in parallel** through the full lifecycle and adversarial review, monitor those workers, and run the full lifecycle yourself — surfacing only the integration-branch→main merge to the user. Put on the hat exactly when you'd otherwise be tempted to triage, groom, or review the chunk yourself.
+- **Two levels — you become the manager.** For an epic, substantive chunk, or high-risk chunk, **you become the manager**: load and run `team-manager` in this session (a hat you wear, not an agent you spawn — no subagent-dispatch primitive exists for it). Run the lifecycle contract, own the integration branch when there are slices, drive the sliced stories to merge **in parallel** through the full lifecycle and adversarial review, monitor those workers, and surface only the user-owned approvals and integration-branch→main merge. Put on the hat exactly when you'd otherwise be tempted to triage, groom, review, or verify the chunk yourself.
 
-**Every agent has a reach-for line, or it's a dead file.** Directly dispatchable workers are named in the list above; the lifecycle-scoped ones are named at the point they're reached — the `groomer` when you own an epic and put on the `team-manager` hat (groom via the `groomer`), the `intake-drafter` in the `intake` skill (it has you delegate drafting to an `intake-drafter` before dispatching substantive work), and the `brief-specialist` at the epic bookends (see Reporting and briefs). An agent in the pool with no "reach for this when…" line anywhere is a dead file — the failure to guard against.
+**Every agent has a reach-for line, or it's a dead file.** Directly dispatchable workers are named in the list above; the lifecycle-scoped ones are named at the point they're reached — the `spec-reviewer` after an architect's spec, the `groomer` after spec approval when the chunk is bigger than one PR, the `plan-reviewer` after the implementation plan, the `acceptance-verifier` before ship and after PR-fix diffs, the `intake-drafter` in the `intake` skill (it has you delegate drafting to an `intake-drafter` before dispatching substantive work), and the `brief-specialist` at the epic bookends (see Reporting and briefs). An agent in the pool with no "reach for this when…" line anywhere is a dead file — the failure to guard against.
 
 Depth stops there: you to a manager to workers. No manager of managers; no worker spawning a team. Breadth tops out around three teams, five at the absolute ceiling, and is capped by what you can actually keep healthy on your monitor tick (below). Push to that ceiling rather than under it: independent slices run at once, and the cure for "too many to watch" is making them monitorable, not serializing them out of fear.
 
@@ -61,9 +66,22 @@ Keep progress visible. Long silences read as failure regardless of cause, so rep
 
 ## The lifecycle (you run it in manager mode)
 
-**Epic = bigger than one PR ⇒ before grooming or dispatch, put on the `team-manager` hat.**
+**Substantive work follows the full lifecycle. Epic = bigger than one PR ⇒ before grooming or dispatch, put on the `team-manager` hat.**
 
-Substantive chunks move `spec -> plan -> build` with a fresh, independent, lensed adversarial review at each gate until the verdict is CLEAN, then user go/no-go at spec and plan. You run this lifecycle yourself in manager mode (per `team-manager`); the spec/plan go/no-go and the integration→main merge are the user's.
+## Lifecycle contract
+
+The executable order is:
+
+`intake -> architect spec -> spec-reviewer CLEAN -> user spec go/no-go -> groom if bigger than one PR -> implementation plan -> plan-reviewer CLEAN -> user plan go/no-go -> build slices -> acceptance-verifier CLEAN -> ship-gate -> PR closeout`.
+
+For an epic, the user approves one reviewed epic spec before grooming, then one reviewed implementation plan after grooming that covers the slice map, dependencies, review profile, and per-slice acceptance gates. The user does not approve every slice plan unless a slice changes product/design direction. For a substantive single-PR chunk, use the same spec and plan approvals, but skip only grooming. Tiny/light direct work can bypass the full lifecycle using the depth rules above.
+
+Loop owners:
+
+- Spec findings route back to the `architect`; re-review with a fresh `spec-reviewer` until CLEAN before the user sees the spec.
+- Plan approach findings route back to the `architect`; slice/dependency findings route to the `groomer`; re-review with a fresh `plan-reviewer` until CLEAN before the user sees the plan.
+- Pre-PR acceptance findings route to the `senior-implementer`; post-PR-fix acceptance findings route through the `steward`, normally to the `bug-fixer`. Re-run `acceptance-verifier` on the current head until CLEAN.
+- Code/PR findings route through `ship-gate`, `steward`, and `bug-fixer`; hunters are for implemented code and PR diffs, not spec or plan gates.
 
 ## State and compaction
 

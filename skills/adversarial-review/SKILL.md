@@ -1,6 +1,6 @@
 ---
 name: adversarial-review
-description: Procedure for gating work with fresh, independent, lensed hunters until a CLEAN verdict, and for front-running an external automated reviewer by tuning your own hunters to the bug categories it actually finds. Use at every quality gate: spec, plan, and code or PR review. Make sure to use this whenever reviewing or QAing substantive work before it advances, scaling the depth to the stakes.
+description: Procedure for code and PR gates with fresh, independent, lensed hunters until a CLEAN verdict, and for front-running an external automated reviewer by tuning your own hunters to the bug categories it actually finds. Use for implemented code, diffs, and PR review. Spec and plan gates use their dedicated reviewer skills. Make sure to use this whenever reviewing or QAing implemented work before it advances, scaling the depth to the stakes.
 ---
 
 # Adversarial Review
@@ -15,19 +15,25 @@ A single quality pass misses things. The backbone of quality here is fresh, inde
 4. Classify every finding REAL / DEFERRED / INVALID against the code. Don't blind-trust any hunter, internal or external; some findings are stale or wrong.
 5. Revise, then re-review. Loop until a confirming pass returns zero real findings. That is CLEAN. A re-trigger is an open loop until that pass comes back, so track it.
 
-## Lenses by gate
+## Review profiles
 
-Pick complementary lenses for the artifact. As a starting set:
+Pick the review profile before spawning hunters, and record it in the plan or closeout notes so cost and coverage are explicit.
 
-- **Spec** — isolation/security; correctness/conformance; model-soundness.
-- **Plan** — spec-fidelity and test discipline; security and TOCTOU; conformance and dependencies.
-- **Code / PR** — line-by-line over the diff including the fixer's own newly added code; security; deployment and network exposure (public vs private surfaces, open ports, secrets, infra/config); conformance to the approved spec and plan; and whether the change is a holistic repair or a bolt-on. Flag patch-accretion as a defect: a fix that adds a condition while leaving the root cause, a growing conditional chain, a function lengthening with each fix, or the same area generating repeat bugs. A change that works but accretes is a finding, not a pass.
+- **Light** — one hunter for tiny/low-risk implemented changes and normal contained bug fixes with clear root cause. The hunter carries correctness, edge cases, and touched-test discipline in one pass.
+- **Standard** — the standard profile is three hunters for ordinary substantive PRs: correctness/edge cases; security/isolation; integration/tests.
+- **High-risk** — five hunters for work touching security/isolation, auth, money, data/contracts, migrations, public APIs, broad refactors, repeated failures, unclear root cause, or high-blast operational behavior: correctness/edge cases; security/isolation; contracts/data; concurrency/TOCTOU/failure modes; integration/deploy/tests.
+
+Spec and plan gates do not use hunters. They use `spec-reviewer` and `plan-reviewer`, respectively. Hunters review implemented code and PR diffs.
+
+## Code / PR lenses
+
+Every code/PR review includes line-by-line review over the diff including the fixer's own newly added code; edge cases and boundary values; security; deployment and network exposure (public vs private surfaces, open ports, secrets, infra/config); conformance to the approved spec and plan; and whether the change is a holistic repair or a bolt-on. Flag patch-accretion as a defect: a fix that adds a condition while leaving the root cause, a growing conditional chain, a function lengthening with each fix, or the same area generating repeat bugs. A change that works but accretes is a finding, not a pass.
 
 ## Front-run an external reviewer
 
 If an external automated reviewer is in the loop, run your own hunters at its grade rather than waiting on its latency. When your hunters go dry but the external one keeps finding real bugs, read the categories of the bugs it actually validated, and add those categories as explicit named lenses. Maintain a living lens-list seeded from those hits. This converts your hunters from a substitute into a front-runner that catches the bug *class* before the external pass does, instead of re-running the same taxonomy and going dry while real bugs remain. A behavioral "dry" result still needs the external confirmation.
 
-At the PR gate, don't serialize against it: open the PR to start the external reviewer, run your own swarm over the diff in parallel (about five lenses for a substantive PR, scaled to stakes), and reconcile both streams into one deduped, classified worklist before fixing. The `ship-gate` skill is that full sequence.
+At the PR gate, don't serialize against it: open the PR to start the external reviewer, run your own swarm over the diff in parallel using the selected review profile, and reconcile both streams into one deduped, classified worklist before fixing. The `ship-gate` skill is that full sequence.
 
 ## Non-vacuous fixes
 

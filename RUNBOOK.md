@@ -13,7 +13,7 @@
 
 Claude remains the most complete target. It installs the verified `scuba-guard.sh` `PreToolUse` adapter and wires it into `~/.claude/settings.json` when `jq` is available.
 
-Codex renders guidance, skills, and custom agents. Codex hook enforcement is policy-only until a target adapter is implemented and tested.
+Codex renders guidance, skills, custom agents, and a Codex-native hook adapter. After install, the hook is wired into `~/.codex/hooks.json` but remains pending trust until the user reviews/trusts it with `/hooks`. Treat it as operational only after trust and a live smoke.
 
 ## Verification
 
@@ -25,6 +25,7 @@ bash -n install.sh
 node scripts/render-target.mjs claude /tmp/scuba-claude
 node scripts/render-target.mjs codex /tmp/scuba-codex
 bash hooks/test-scuba-guard.sh
+bash hooks/test-codex-scuba-guard.sh
 ```
 
 Check rendered output shape:
@@ -32,7 +33,7 @@ Check rendered output shape:
 - Claude agents are Markdown files with concrete `tools:` and `model: opus`.
 - Codex agents are TOML files with `name`, `description`, `developer_instructions`, `model`, and `model_reasoning_effort`.
 - Codex root guidance is inlined into a managed block in `~/.codex/AGENTS.md`; `@file` references are not treated as startup imports.
-- Codex rendered hooks include policy documentation but no installed enforcement adapter.
+- Codex rendered hooks include `scuba-guard.sh`; installed enforcement is pending `/hooks` trust until live-smoked.
 
 ## Hook Verification
 
@@ -43,7 +44,9 @@ For Claude:
 
 For Codex:
 
-- Do not install enforcement until an adapter has standalone fixtures and a live smoke test for the Codex hook contract.
+- `bash hooks/test-codex-scuba-guard.sh` verifies the adapter logic outside the runtime.
+- After `bash install.sh codex`, restart Codex and run `/hooks`; review and trust the Scuba hook entry.
+- Live-smoke a blocked draft PR or primary-tree write before claiming enforcement is operational.
 
 ## Recovery
 

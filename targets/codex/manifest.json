@@ -16,7 +16,6 @@
     "agentDir": "agents",
     "hookDir": "hooks"
   },
-  "settingsFile": "config.toml",
   "worktreeSegment": ".codex/worktrees",
   "terms": {
     "rootGuidanceFile": "AGENTS.md",
@@ -45,9 +44,14 @@
   },
   "hooks": {
     "scuba-guard": {
-      "install": false,
-      "status": "policy-only",
-      "reason": "Codex hooks use a different event contract; install only after a Codex adapter is implemented and smoke-tested."
+      "install": true,
+      "event": "PreToolUse",
+      "matcher": "Bash|apply_patch|Edit|Write",
+      "script": "scuba-guard.sh",
+      "configFile": "hooks.json",
+      "configFormat": "codex-hooks-json",
+      "status": "installed-pending-trust",
+      "reason": "Codex hook adapter is installed through hooks.json, but Codex requires the user to review and trust non-managed command hooks with /hooks before enforcement is operational."
     }
   }
 }

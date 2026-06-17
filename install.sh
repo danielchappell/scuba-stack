@@ -77,13 +77,16 @@ MANIFEST="$DEST/.scuba-manifest"
 SKILL_DEST="$DEST/$INSTALL_SKILL_DIR"
 AGENT_DEST="$DEST/$INSTALL_AGENT_DIR"
 HOOK_DEST="$DEST/$INSTALL_HOOK_DIR"
-SETTINGS="$DEST/$SETTINGS_FILE"
 
 HOOK_INSTALL="$(manifest_get_optional hooks.scuba-guard.install)"
 HOOKS_ENABLED=0
 if [ "$HOOK_INSTALL" = "true" ]; then HOOKS_ENABLED=1; fi
 HOOK_SCRIPT="$(manifest_get_optional hooks.scuba-guard.script)"
 HOOK_MATCHER="$(manifest_get_optional hooks.scuba-guard.matcher)"
+HOOK_CONFIG_FILE="$(manifest_get_optional hooks.scuba-guard.configFile)"
+HOOK_CONFIG_FORMAT="$(manifest_get_optional hooks.scuba-guard.configFormat)"
+[ -n "$HOOK_CONFIG_FILE" ] || HOOK_CONFIG_FILE="$SETTINGS_FILE"
+HOOK_CONFIG="$DEST/$HOOK_CONFIG_FILE"
 HOOK_CMD=""
 if [ -n "$HOOK_SCRIPT" ]; then HOOK_CMD="$HOOK_DEST/$HOOK_SCRIPT"; fi
 LEGACY_IMPORT_LINES_JSON="$(manifest_get_optional legacyImportLines)"
@@ -99,21 +102,40 @@ node "$HERE/scripts/render-target.mjs" "$TARGET" "$BUILD"
 HAVE_JQ=0
 if command -v jq >/dev/null 2>&1; then HAVE_JQ=1; fi
 
-remove_settings_hook() {
-  [ "$HOOKS_ENABLED" -eq 1 ] || return 0
+remove_hook_config_entry() {
+  local script="$1"
   [ "$HAVE_JQ" -eq 1 ] || return 0
-  [ -f "$SETTINGS" ] || return 0
+  [ -n "$HOOK_CONFIG_FILE" ] || return 0
+  [ -f "$HOOK_CONFIG" ] || return 0
   local tmp
-  tmp="$(mktemp "${SETTINGS}.scuba-tmp.XXXXXX")"
-  if jq '(.hooks.PreToolUse // []) as $p
-         | .hooks.PreToolUse = [ $p[]
-             | select( ((.hooks // []) | map(.command // "")
-                        | any(endswith("/'"$HOOK_SCRIPT"'"))) | not ) ]' \
-        "$SETTINGS" > "$tmp" 2>/dev/null; then
-    mv "$tmp" "$SETTINGS"
-  else
-    rm -f "$tmp"
-  fi
+  tmp="$(mktemp "${HOOK_CONFIG}.scuba-tmp.XXXXXX")"
+  case "$HOOK_CONFIG_FORMAT" in
+    claude-settings-json)
+      if jq '(.hooks.PreToolUse // []) as $p
+             | .hooks.PreToolUse = [ $p[]
+                 | select( ((.hooks // []) | map(.command // "")
+                            | any(endswith("/'"$script"'"))) | not ) ]' \
+            "$HOOK_CONFIG" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$HOOK_CONFIG"
+      else
+        rm -f "$tmp"
+      fi
+      ;;
+    codex-hooks-json)
+      if jq '(.PreToolUse // []) as $p
+             | .PreToolUse = [ $p[]
+                 | select( ((.hooks // []) | map(.command // "")
+                            | any(endswith("/'"$script"'"))) | not ) ]' \
+            "$HOOK_CONFIG" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$HOOK_CONFIG"
+      else
+        rm -f "$tmp"
+      fi
+      ;;
+    *)
+      rm -f "$tmp"
+      ;;
+  esac
 }
 
 # 1) Remove the org's previously installed target files from the last manifest.
@@ -123,7 +145,12 @@ if [ -f "$MANIFEST" ]; then
       skill:*)         rm -rf "$SKILL_DEST/${entry#skill:}" ;;
       agent:*)         rm -f  "$AGENT_DEST/${entry#agent:}" ;;
       hook:*)          rm -f  "$HOOK_DEST/${entry#hook:}" ;;
-      settings-hook:*) remove_settings_hook ;;
+      settings-hook:*)
+        prev_hook_script="${entry#settings-hook:}"
+        if [ "$HOOKS_ENABLED" -eq 0 ] || [ "$prev_hook_script" != "$HOOK_SCRIPT" ]; then
+          remove_hook_config_entry "$prev_hook_script"
+        fi
+        ;;
     esac
   done < "$MANIFEST"
 fi
@@ -160,28 +187,69 @@ if [ "$HOOKS_ENABLED" -eq 1 ]; then
   done
 
   if [ -f "$HOOK_DEST/$HOOK_SCRIPT" ]; then
-    echo "settings-hook:$HOOK_SCRIPT" >> "$MANIFEST"
     if [ "$HAVE_JQ" -eq 1 ]; then
-      if [ -f "$SETTINGS" ]; then
-        cp "$SETTINGS" "$SETTINGS.scuba-bak.$(date +%Y%m%d%H%M%S)"
+      base="$(mktemp "${TMPDIR:-/tmp}/scuba-hook-base.XXXXXX")"
+      if [ -f "$HOOK_CONFIG" ]; then
+        cp "$HOOK_CONFIG" "$base"
       else
-        printf '%s\n' '{}' > "$SETTINGS"
+        printf '%s\n' '{}' > "$base"
       fi
-      tmp="$(mktemp "${SETTINGS}.scuba-tmp.XXXXXX")"
-      if jq --arg matcher "$HOOK_MATCHER" --arg cmd "$HOOK_CMD" --arg script "$HOOK_SCRIPT" '
-            (.hooks.PreToolUse // []) as $p
-            | .hooks.PreToolUse = ([ $p[]
-                | select( ((.hooks // []) | map(.command // "")
-                           | any(endswith("/" + $script))) | not ) ]
-                + [ { "matcher": $matcher,
-                      "hooks": [ { "type": "command", "command": $cmd } ] } ])
-          ' "$SETTINGS" > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$SETTINGS"
-        HOOK_INSTALLED_MSG="merged"
-      else
-        rm -f "$tmp"
-        HOOK_INSTALLED_MSG="merge-failed"
-      fi
+      tmp="$(mktemp "${HOOK_CONFIG}.scuba-tmp.XXXXXX")"
+      case "$HOOK_CONFIG_FORMAT" in
+        claude-settings-json)
+          if jq --arg matcher "$HOOK_MATCHER" --arg cmd "$HOOK_CMD" --arg script "$HOOK_SCRIPT" '
+                (.hooks.PreToolUse // []) as $p
+                | .hooks.PreToolUse = ([ $p[]
+                    | select( ((.hooks // []) | map(.command // "")
+                               | any(endswith("/" + $script))) | not ) ]
+                    + [ { "matcher": $matcher,
+                          "hooks": [ { "type": "command", "command": $cmd } ] } ])
+              ' "$base" > "$tmp" 2>/dev/null; then
+            if [ -f "$HOOK_CONFIG" ] && cmp -s "$HOOK_CONFIG" "$tmp"; then
+              rm -f "$tmp"
+              HOOK_INSTALLED_MSG="unchanged"
+            else
+              [ -f "$HOOK_CONFIG" ] && cp "$HOOK_CONFIG" "$HOOK_CONFIG.scuba-bak.$(date +%Y%m%d%H%M%S)"
+              mv "$tmp" "$HOOK_CONFIG"
+              HOOK_INSTALLED_MSG="merged"
+            fi
+            echo "settings-hook:$HOOK_SCRIPT" >> "$MANIFEST"
+          else
+            rm -f "$tmp"
+            HOOK_INSTALLED_MSG="merge-failed"
+          fi
+          ;;
+        codex-hooks-json)
+          if jq --arg matcher "$HOOK_MATCHER" --arg cmd "$HOOK_CMD" --arg script "$HOOK_SCRIPT" '
+                (.PreToolUse // []) as $p
+                | .PreToolUse = ([ $p[]
+                    | select( ((.hooks // []) | map(.command // "")
+                               | any(endswith("/" + $script))) | not ) ]
+                    + [ { "matcher": $matcher,
+                          "hooks": [ { "type": "command", "command": $cmd,
+                                       "timeout": 30,
+                                       "statusMessage": "Checking Scuba policy" } ] } ])
+              ' "$base" > "$tmp" 2>/dev/null; then
+            if [ -f "$HOOK_CONFIG" ] && cmp -s "$HOOK_CONFIG" "$tmp"; then
+              rm -f "$tmp"
+              HOOK_INSTALLED_MSG="unchanged"
+            else
+              [ -f "$HOOK_CONFIG" ] && cp "$HOOK_CONFIG" "$HOOK_CONFIG.scuba-bak.$(date +%Y%m%d%H%M%S)"
+              mv "$tmp" "$HOOK_CONFIG"
+              HOOK_INSTALLED_MSG="merged"
+            fi
+            echo "settings-hook:$HOOK_SCRIPT" >> "$MANIFEST"
+          else
+            rm -f "$tmp"
+            HOOK_INSTALLED_MSG="merge-failed"
+          fi
+          ;;
+        *)
+          rm -f "$tmp"
+          HOOK_INSTALLED_MSG="merge-failed"
+          ;;
+      esac
+      rm -f "$base"
     else
       HOOK_INSTALLED_MSG="no-jq"
     fi
@@ -215,7 +283,7 @@ echo
 case "$TARGET" in
   claude)
     case "$HOOK_INSTALLED_MSG" in
-      merged)
+      merged|unchanged)
         echo "Enforcement hook wired into ~/.claude/settings.json (PreToolUse). It activates on the next terminal restart." ;;
       no-jq|merge-failed)
         echo "NOTE: jq was not available or the merge failed, so the enforcement hook was copied but not wired into ~/.claude/settings.json."
@@ -229,7 +297,16 @@ case "$TARGET" in
     echo "then restart your terminal. Requires Claude Code v2.1.32+."
     ;;
   codex)
-    echo "Codex hook enforcement is policy-only in this cut: no hook adapter is installed until the Codex event contract is smoke-tested."
-    echo "Restart Codex so ~/.codex/AGENTS.md, ~/.agents/skills, and ~/.codex/agents are reloaded."
+    case "$HOOK_INSTALLED_MSG" in
+      merged|unchanged)
+        echo "Codex hook adapter wired into ~/.codex/hooks.json (PreToolUse). Status: installed, pending trust."
+        echo "Review and trust the hook with /hooks after restarting Codex. Treat enforcement as operational only after it is trusted and live-smoked." ;;
+      no-jq|merge-failed)
+        echo "NOTE: jq was not available or the merge failed, so the Codex hook adapter was copied but not wired into ~/.codex/hooks.json."
+        echo "After fixing the hook config, re-run install and trust it with /hooks." ;;
+      *)
+        echo "Codex hook adapter was not wired. Re-run install after checking the target manifest." ;;
+    esac
+    echo "Restart Codex so ~/.codex/AGENTS.md, ~/.agents/skills, ~/.codex/agents, and ~/.codex/hooks.json are reloaded."
     ;;
 esac

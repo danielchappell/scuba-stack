@@ -10,7 +10,7 @@ The core defines the operating model:
 - Manager mode owns larger chunks, slices work, monitors workers, and runs quality gates.
 - Workers are narrow roles: design, grooming, implementation, bug fixing, review hunting, PR closeout, research, brief rendering, and roadmap bookkeeping.
 - State lives in `.scuba/`, with `.scuba/roadmap.md` as the resume anchor.
-- Quality is structural: specs, plans, and diffs pass through fresh adversarial review until CLEAN.
+- Quality is structural: specs pass through `spec-reviewer`, plans pass through `plan-reviewer`, built work passes through `acceptance-verifier`, and diffs/PRs pass through fresh adversarial hunters until CLEAN.
 
 The core source files are intentionally target-neutral:
 
@@ -28,12 +28,12 @@ Each target manifest maps the neutral concepts to a concrete runtime:
 - `tool_profile` values become platform tool lists, built-in agent postures, or equivalent capabilities.
 - The neutral pointer becomes the target's global guidance file.
 - Neutral agents render into the target's agent format.
-- Hook policy becomes a target adapter only when the target hook contract is verified.
+- Hook policy becomes a target adapter only when the target hook contract is represented by target-specific fixtures and install status is truthful.
 
 Current targets:
 
 - Claude: Markdown agents, concrete tool lists, `model: opus`, and a verified `PreToolUse` hook adapter.
-- Codex: TOML custom agents, `gpt-5.5` high-reasoning profile, skills installed under `~/.agents/skills`, and hook policy documented but not enforced.
+- Codex: TOML custom agents, `gpt-5.5` high-reasoning profile, skills installed under `~/.agents/skills`, and a Codex-native `PreToolUse` adapter installed through `~/.codex/hooks.json` pending user trust.
 
 ## Installer
 
@@ -43,7 +43,7 @@ Current targets:
 2. The installer removes files recorded in the previous target manifest.
 3. It copies rendered skills, agents, pointer, and verified hook adapters.
 4. It wires the target root guidance using the target manifest's root mode: Claude appends one import line if absent, while Codex maintains a marked Scuba block.
-5. For Claude only, it surgically merges the hook entry into settings with temp-then-`mv`.
+5. It surgically merges verified hook entries with temp-then-`mv`: Claude into `settings.json`, Codex into `hooks.json`.
 
 This preserves the original safety property: the installer touches only Scuba-owned files and never overwrites the user's own guidance.
 
@@ -59,4 +59,4 @@ Hook behavior is portable as policy, not as an executable. Event names, input JS
 - standalone fixtures;
 - a live smoke test proving the hook fires in the relevant worker/subagent context.
 
-Until then, that target should ship policy-only hook documentation.
+Codex additionally has a trust boundary: installing `hooks.json` is not the same as operational enforcement. Non-managed command hooks must be reviewed and trusted in the target runtime before they can be treated as active.

@@ -5,9 +5,10 @@ Install this at `{{target.rootGuidancePath}}`. It's the always-on pointer; the d
 In any session that involves coordinating or building software:
 
 - If you're the session the user talks to, you are the **chief of staff** — follow the `chief-of-staff` skill. Dispatch at the right depth; never triage, review, or build yourself.
-- Owning an epic (anything bigger than one PR)? **Before grooming or dispatching, load and run `team-manager` yourself** — you are the manager; there is no separate manager agent.
+- Owning substantive or high-risk work, including any epic bigger than one PR? **Before grooming or dispatching, load and run `team-manager` yourself** — you are the manager; there is no separate manager agent.
 - Before dispatching substantive work, follow the `intake` skill: draw the user's ask into a real mandate by delegating the drafting to an `intake-drafter` and grilling the user against the draft, so you stay free and the spec is built on extracted intent.
-- At any spec, plan, or code gate, follow the `adversarial-review` skill.
+- At the spec gate, use `spec-reviewer` / `spec-review`; at the plan gate, use `plan-reviewer` / `plan-review`; at code and PR gates, follow `adversarial-review`.
+- Before opening a PR, and again after PR-fix diffs, use `acceptance-verifier` / `acceptance-verification` to verify the current head against the approved spec, plan, and definition of done.
 - When work is finished and about to go up for review, follow the `ship-gate` skill: open the PR first to start the external reviewer, then run a parallel hunter swarm over the diff, reconcile both streams, and fix at the root.
 - Whenever background agents are running, follow the `process-health-monitor` skill.
 - When changing existing code, fixing a bug or adding a feature, follow `integrate-dont-bolt-on`: repair the root cause and integrate the change, don't bolt on another condition.

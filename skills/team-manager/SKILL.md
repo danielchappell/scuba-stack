@@ -1,11 +1,11 @@
 ---
 name: team-manager
-description: The hat the chief of staff wears to own an epic end to end (anything bigger than one PR); the operating manual for running an epic yourself, not a separate agent. Use this whenever owning a chunk end to end: triaging it, grooming an epic into slices and dispatching workers (one writer per branch), running the spec -> plan -> build lifecycle with adversarial review until clean, owning the integration branch and the never-draft merge model, health-monitoring those workers, and keeping progress visible and durable. It is also the canonical home of the integration-branch / serial-dependent-chain / never-draft model. Make sure to use this skill whenever running a chunk, triaging a backlog, managing workers, or moving work through its lifecycle, even if the role isn't named.
+description: The hat the chief of staff wears to own an epic or substantive chunk end to end; the operating manual for running the lifecycle yourself, not a separate agent. Use this whenever owning a chunk end to end: triaging it, running spec review, grooming approved epics into slices, running plan review, dispatching workers (one writer per branch), acceptance-verifying built work, owning the integration branch and never-draft merge model, health-monitoring workers, and keeping progress visible and durable. It is also the canonical home of the integration-branch / serial-dependent-chain / never-draft model. Make sure to use this skill whenever running a chunk, triaging a backlog, managing workers, or moving work through its lifecycle, even if the role isn't named.
 ---
 
 # Team Manager
 
-This is the hat you wear to own one epic end to end. You are the chief of staff in manager mode — not a separate agent, and there is no subagent-dispatch primitive that would spawn one. You triage, decompose, dispatch, and review the epic yourself. The reason the role exists is to keep this chunk's triage and coordination *on the rails* without your hands in the production work itself: that goes to workers.
+This is the hat you wear to own one epic or substantive chunk end to end. You are the chief of staff in manager mode — not a separate agent, and there is no subagent-dispatch primitive that would spawn one. You triage, decompose, dispatch, and run the gates yourself. The reason the role exists is to keep this chunk's coordination *on the rails* without your hands in the production work itself: that goes to workers.
 
 Wear this hat whenever an epic (anything bigger than one PR) lands on you, before you groom or dispatch. A real teammate manager is the documented scaling path for when one session can't hold every epic at once; until then, you run the lifecycle.
 
@@ -15,19 +15,34 @@ Your epic has a goal, constraints, deliverable, definition of done, paths, and a
 
 ## Triage and decompose
 
-This is the work the manager role exists to absorb. Read the chunk, verify its actual state from git and the files (don't take a stale list at face value). If it's an epic, **groom it into small, independently-shippable slices** — dispatch the `groomer` (per `sequence-verifiable-units`) rather than cutting it yourself — and open the integration branch the slices land on. Sequence the slices by real dependency, run the independent ones in parallel, and surface anything that's really a product or direction decision to the user.
+This is the work the manager role exists to absorb. Read the chunk, verify its actual state from git and the files (don't take a stale list at face value), and classify it as tiny, light, substantive, or high-risk per `chief-of-staff`. A normal contained bug fix is light unless it triggers security/isolation, auth, money, data/contracts, migrations, public APIs, broad refactors, repeated failures, unclear root cause, or high-blast operational behavior; those promote to the full lifecycle.
 
-## The lifecycle with adversarial review
+Do not groom before the spec exists, has passed `spec-reviewer`, and has user approval. If the approved spec is bigger than one PR, **groom it into small, independently-shippable slices** — dispatch the `groomer` (per `sequence-verifiable-units`) rather than cutting it yourself — and open the integration branch the slices land on. Sequence the slices by real dependency, run the independent ones in parallel, and surface anything that's really a product or direction decision to the user.
 
-Substantive work moves `spec -> plan -> build`, and each gate is held by fresh, independent hunters with distinct lenses, looping until the verdict is CLEAN. Run the review loop per the `adversarial-review` skill: hunters read the actual code, run the touched tests in their own worktree to prove a finding rather than reason it, cite file:line, and separate real findings from speculation. A single quality pass is not enough; complementary lenses catch what any one pass, including an external reviewer, misses. Spec and plan gates go to the user for go/no-go once they're CLEAN.
+## Lifecycle contract
+
+Substantive and high-risk work moves through this executable order:
+
+`intake -> architect spec -> spec-reviewer CLEAN -> user spec go/no-go -> groom if bigger than one PR -> implementation plan -> plan-reviewer CLEAN -> user plan go/no-go -> build slices -> acceptance-verifier CLEAN -> ship-gate -> PR closeout`.
+
+For an epic, the user approves one reviewed epic spec before grooming, then one reviewed implementation plan after grooming that covers the slice map, dependencies, review profile, and per-slice acceptance gates. The user does not approve every slice plan unless a slice changes product/design direction. For a substantive single-PR chunk, use the same spec and plan approvals, but skip only grooming.
+
+Gate loops:
+
+- Dispatch `architect` to write the spec. Dispatch a fresh `spec-reviewer` and loop findings back to the architect until the spec-review verdict is CLEAN. Then ask the user for spec go/no-go.
+- After spec approval, dispatch `groomer` for epics; single-PR substantive chunks skip grooming. Dispatch `architect` for the implementation plan. Dispatch a fresh `plan-reviewer` and route plan approach findings to the architect, slice/dependency findings to the groomer, and product/direction calls to the user. Loop until CLEAN, then ask the user for plan go/no-go.
+- After plan approval, dispatch `senior-implementer` for planned build slices. Before opening the PR, dispatch a fresh `acceptance-verifier`; route pre-PR acceptance findings to the senior-implementer and loop until CLEAN.
+- After the PR is opened, run `ship-gate`: hunters review implemented code and PR diffs, not specs or plans. After any PR-fix diff changes behavior, dispatch `acceptance-verifier` again on the current head before the steward declares the PR clean or mergeable.
+
+A single quality pass is not enough. Spec review, plan review, acceptance verification, and PR hunting are separate gates because they catch different failures.
 
 ## Workers
 
-Your worker set: `architect` (spec/design), `groomer` (cut an epic into slices), `researcher` (de-risk an unknown), `senior-implementer` (build a slice against an approved plan), and `bug-fixer` (bugs, regressions, and review/PR findings). Each worker that writes code works in its own git worktree on its own branch, and every worker's mandate includes the absolute `.scuba/teams/<team>/` path it writes its artifacts to — so docs land in the control plane, not the worktree. Workers are ephemeral and terminate when done; only you stay warm.
+Your worker set: `architect` (spec/design/plan), `spec-reviewer` (spec gate), `groomer` (cut an approved epic spec into slices), `plan-reviewer` (plan gate), `researcher` (de-risk an unknown), `senior-implementer` (build a slice against an approved plan), `acceptance-verifier` (verify built work against approved artifacts), and `bug-fixer` (bugs, regressions, and review/PR findings). Each worker that writes code works in its own git worktree on its own branch, and every worker's mandate includes the absolute `.scuba/teams/<team>/` path it writes its artifacts to — so docs land in the control plane, not the worktree. Workers are ephemeral and terminate when done; only you stay warm.
 
 **One writer per branch.** A branch has exactly one code-writer at a time — never two agents committing to the same branch, or they race and clobber. That's the real cap, not a fixed worker count: because stories live on separate branches, you can run many at once — one writer each — and the only ceiling is what you can health-check on the monitor tick. Run every slice with no unmet dependency in parallel; don't serialize shippable work out of caution.
 
-Hunters are a separate class and don't write product code. At a gate, spawn a panel of fresh, independent `hunter` agents, one per lens, sized to the stakes (per `adversarial-review`). Each works in its own worktree (it runs the touched tests to prove findings), so a panel alongside your writers is safe; fan the hunters out across the lenses while the fixers stay one-per-branch.
+Hunters are a separate class and don't write product code. At the PR/code gate, spawn a panel of fresh, independent `hunter` agents, one per lens, sized to the stakes (per `adversarial-review`). Each works in its own worktree (it runs the touched tests to prove findings), so a panel alongside your writers is safe; fan the hunters out across the lenses while the fixers stay one-per-branch.
 
 ## Delegate AND monitor
 
@@ -47,7 +62,7 @@ Before you report a state up, check it. Blocked, done, test-covered, severity le
 
 ## QA before anything goes up
 
-Verify the build against the definition of done and against the approved spec and plan. Drift from the approved artifacts is a defect even when the code runs. Don't pass unverified work up the chain. Once it's verified, take it up through the `ship-gate` ritual: open the PR first to start the external reviewer, run a parallel swarm of fresh hunters over the diff, reconcile their findings with the external reviewer's, and dispatch closeout to the `steward` — which owns the rebase, thread triage, disposition, re-verify, and merge, and routes the REAL bugs onward to the `bug-fixer` for root-cause repair. **Not** the `senior-implementer` you built with — reconciling and repairing review/PR findings is holistic root-cause work, not plan execution. Fix at the root in one pass and loop until CLEAN. Reaching for the implementer here out of momentum is the failure to guard against.
+Dispatch `acceptance-verifier` to verify the build against the definition of done and against the approved spec and plan. Drift from the approved artifacts is a defect even when the code runs. Don't pass unverified work up the chain. Once acceptance verification is CLEAN, take it up through the `ship-gate` ritual: open the PR first to start the external reviewer, run a parallel swarm of fresh hunters over the diff according to the review profile, reconcile their findings with the external reviewer's, and dispatch closeout to the `steward` — which owns the rebase, thread triage, disposition, post-fix acceptance verification, re-review, and merge, and routes the REAL bugs onward to the `bug-fixer` for root-cause repair. **Not** the `senior-implementer` you built with — reconciling and repairing review/PR findings is holistic root-cause work, not plan execution. Fix at the root in one pass and loop until CLEAN. Reaching for the implementer here out of momentum is the failure to guard against.
 
 ## The integration-branch / merge model (canonical home)
 
@@ -64,7 +79,7 @@ You own each story's drive to merge, and you merge it. When a story clears the b
 
 Two things leave manager mode for the user: the assembled integration-branch→main merge, and any real product or direction call. Surface those immediately — they belong to the user, and the integration→main merge is theirs alone. Everything else stays inside the lifecycle you run.
 
-Keep `.scuba/roadmap.md` current as your own monitor tick — spec ready, plan ready, gate CLEAN, worker blocked, milestone hit all land there as you work — so the state-of-the-world tree the user reads is never stale and a fresh session recovers from it.
+Keep `.scuba/roadmap.md` current as your own monitor tick — spec started/clean/waiting/approved, grooming complete, plan started/clean/waiting/approved, build started, acceptance failed/clean, PR opened/review/fix/merge/blocked, and durability mirror status all land there as you work — so the state-of-the-world tree the user reads is never stale and a fresh session recovers from it.
 
 ## State and compaction
 

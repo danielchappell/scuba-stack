@@ -10,6 +10,18 @@ Project-specific only. The Scuba Stack rules live globally at {{target.userScope
 - test:
 - lint:
 
+## Scuba Review Overrides
+Defaults if this section is left blank:
+- default review profile: `standard`
+- high-risk triggers: security/isolation, auth, money, data/contracts, migrations, public APIs, broad refactors, repeated failures, unclear root cause, high-blast operational behavior
+- extra hunter lenses:
+
+Project-specific overrides:
+- default review profile (`light` | `standard` | `high-risk`):
+- high-risk triggers:
+- extra hunter lenses:
+- commands acceptance-verifier should prefer:
+
 ## External PR reviewer (used by `ship-gate`)
 How this repo opens a PR and works with its external automated reviewer (e.g. {{target.externalReviewerExample}}). Fill in for your setup; `ship-gate` supplies the ritual, this supplies the commands.
 - Open the PR (starts the external reviewer): `gh pr create --fill --base <base> --head <branch>` — `<base>` is the **integration branch** for a story PR, `main` for the integration→main PR.

@@ -18,6 +18,44 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLAUDE_BEHAVIOR_BASELINE = "3926827c74ab4adba42abfa715d130dd69860df9";
+const APPROVED_CLAUDE_PROMPT_DIFFS = new Map([
+  ["global-CLAUDE.md", [
+    "spec-reviewer",
+    "acceptance-verifier"
+  ]],
+  ["agents/hunter.md", [
+    "implemented code and PR diffs",
+    "Edge cases are not optional"
+  ]],
+  ["agents/steward.md", [
+    "acceptance-verifier",
+    "post-fix"
+  ]],
+  ["skills/adversarial-review/SKILL.md", [
+    "Review profiles",
+    "standard profile is three hunters"
+  ]],
+  ["skills/chief-of-staff/SKILL.md", [
+    "Lifecycle contract",
+    "Substantive work follows the full lifecycle"
+  ]],
+  ["skills/roadmap/SKILL.md", [
+    "Lifecycle event vocabulary",
+    "status.md"
+  ]],
+  ["skills/ship-gate/SKILL.md", [
+    "acceptance-verifier",
+    "standard profile"
+  ]],
+  ["skills/team-manager/SKILL.md", [
+    "Lifecycle contract",
+    "acceptance-verifier"
+  ]],
+  ["project-template/CLAUDE.md", [
+    "Scuba Review Overrides",
+    "high-risk triggers"
+  ]]
+]);
 const tests = [];
 
 test("neutral frontmatter and target profile mappings are valid", async () => {
@@ -144,34 +182,79 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
 
     assert.ok(existsSync(path.join(claudeOut, "hooks", "scuba-guard.sh")));
     assert.ok(existsSync(path.join(claudeOut, "hooks", "scuba-guard.policy.md")));
-    assert.ok(existsSync(path.join(codexOut, "hooks", "README.md")));
+    assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.sh")));
     assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.policy.md")));
-    assert.ok(!existsSync(path.join(codexOut, "hooks", "scuba-guard.sh")));
     assert.ok(existsSync(path.join(claudeOut, "project-template", "CLAUDE.md")));
     assert.ok(existsSync(path.join(codexOut, "project-template", "AGENTS.md")));
   });
 });
 
-test("Claude render preserves the pre-agnostic behavioral prompt text", async () => {
+test("lifecycle hardening contracts are present in rendered prompts", async () => {
+  await withTempDir("lifecycle-render", async (tmp) => {
+    const out = path.join(tmp, "claude");
+    await run("node", ["scripts/render-target.mjs", "claude", out]);
+
+    const chief = await readFile(path.join(out, "skills", "chief-of-staff", "SKILL.md"), "utf8");
+    assert.match(chief, /architect spec -> spec-reviewer CLEAN -> user spec go\/no-go/);
+    assert.match(chief, /Tiny/);
+    assert.match(chief, /High-risk/);
+
+    const team = await readFile(path.join(out, "skills", "team-manager", "SKILL.md"), "utf8");
+    assert.match(team, /post-fix acceptance verification/);
+    assert.match(team, /The user does not approve every slice plan/);
+
+    const review = await readFile(path.join(out, "skills", "adversarial-review", "SKILL.md"), "utf8");
+    assert.match(review, /Light/);
+    assert.match(review, /Standard/);
+    assert.match(review, /High-risk/);
+    assert.match(review, /correctness\/edge cases/);
+
+    const roadmap = await readFile(path.join(out, "skills", "roadmap", "SKILL.md"), "utf8");
+    for (const event of [
+      "spec.started",
+      "spec.clean",
+      "spec.waiting-user",
+      "plan.approved",
+      "acceptance.failed",
+      "acceptance.clean",
+      "pr.opened",
+      "pr.fixing",
+      "durability.pushed"
+    ]) {
+      assert.match(roadmap, new RegExp(escapeRegExp(event)));
+    }
+
+    for (const role of ["spec-reviewer", "plan-reviewer", "acceptance-verifier"]) {
+      assert.ok(existsSync(path.join(out, "agents", `${role}.md`)), `${role} agent is rendered`);
+    }
+
+    const template = await readFile(path.join(out, "project-template", "CLAUDE.md"), "utf8");
+    assert.match(template, /Scuba Review Overrides/);
+  });
+});
+
+test("Claude render preserves baseline except approved lifecycle deltas", async () => {
   await withTempDir("claude-baseline", async (tmp) => {
     const out = path.join(tmp, "claude");
     await run("node", ["scripts/render-target.mjs", "claude", out]);
 
-    await assertFileEqualsGit(
+    await assertClaudeBaselineOrApprovedDelta(
+      "global-CLAUDE.md",
       path.join(out, "scuba.md"),
       `${CLAUDE_BEHAVIOR_BASELINE}:global-CLAUDE.md`
     );
 
     for (const file of gitList("agents")) {
       if (!file.endsWith(".md")) continue;
-      await assertFileEqualsGit(path.join(out, file), `${CLAUDE_BEHAVIOR_BASELINE}:${file}`);
+      await assertClaudeBaselineOrApprovedDelta(file, path.join(out, file), `${CLAUDE_BEHAVIOR_BASELINE}:${file}`);
     }
 
     for (const file of gitList("skills")) {
-      await assertFileEqualsGit(path.join(out, file), `${CLAUDE_BEHAVIOR_BASELINE}:${file}`);
+      await assertClaudeBaselineOrApprovedDelta(file, path.join(out, file), `${CLAUDE_BEHAVIOR_BASELINE}:${file}`);
     }
 
-    await assertFileEqualsGit(
+    await assertClaudeBaselineOrApprovedDelta(
+      "project-template/CLAUDE.md",
       path.join(out, "project-template", "CLAUDE.md"),
       `${CLAUDE_BEHAVIOR_BASELINE}:project-template/CLAUDE.md`
     );
@@ -214,12 +297,14 @@ test("installer temp installs are surgical and idempotent for Claude and Codex",
   await withTempDir("install", async (tmp) => {
     await assertClaudeInstall(path.join(tmp, "claude-home"));
     await assertCodexInstall(path.join(tmp, "codex-home"));
+    await assertCodexInstallWithInvalidHookConfig(path.join(tmp, "codex-invalid-home"));
   });
 });
 
 test("installer syntax and Claude hook fixture pass", async () => {
   await run("bash", ["-n", "install.sh"]);
   await run("bash", ["hooks/test-scuba-guard.sh"]);
+  await run("bash", ["hooks/test-codex-scuba-guard.sh"]);
 });
 
 function test(name, fn) {
@@ -259,6 +344,17 @@ async function assertCodexInstall(home) {
     path.join(home, ".codex", "AGENTS.md"),
     "# User Codex guidance\n\n@~/.codex/scuba.md\n"
   );
+  await writeFile(
+    path.join(home, ".codex", "hooks.json"),
+    JSON.stringify({
+      PreToolUse: [
+        {
+          matcher: "^Bash$",
+          hooks: [{ type: "command", command: "/usr/bin/true" }]
+        }
+      ]
+    }, null, 2) + "\n"
+  );
 
   await install("codex", home);
   await addStaleManifestEntries(home, "codex");
@@ -275,14 +371,42 @@ async function assertCodexInstall(home) {
   const sourceAgents = (await agentFiles()).map((file) => file.replace(/\.md$/, ".toml")).sort();
   assert.deepEqual(await dirNames(path.join(home, ".agents", "skills")), sourceSkills);
   assert.deepEqual(await fileNames(path.join(home, ".codex", "agents")), sourceAgents);
+  assert.ok(existsSync(path.join(home, ".codex", "hooks", "scuba-guard.sh")));
   assert.ok(!existsSync(path.join(home, ".codex", "agents", "stale-agent.toml")));
   assert.ok(!existsSync(path.join(home, ".agents", "skills", "stale-skill")));
   assert.ok(!existsSync(path.join(home, ".codex", "hooks", "stale-hook.sh")));
+  assert.equal(await countMatching(path.join(home, ".codex"), /^hooks\.json\.scuba-bak\./), 1);
+
+  const hooks = await readJson(path.join(home, ".codex", "hooks.json"));
+  assert.equal(
+    hooks.PreToolUse.filter((entry) =>
+      (entry.hooks ?? []).some((hook) => (hook.command ?? "").endsWith("/scuba-guard.sh"))
+    ).length,
+    1
+  );
+  assert.equal(
+    hooks.PreToolUse.filter((entry) =>
+      (entry.hooks ?? []).some((hook) => hook.command === "/usr/bin/true")
+    ).length,
+    1
+  );
 
   const manifest = await readManifest(path.join(home, ".codex", ".scuba-manifest"));
   assert.equal(manifest.skill, sourceSkills.length);
   assert.equal(manifest.agent, sourceAgents.length);
-  assert.equal(manifest.hook ?? 0, 0);
+  assert.equal(manifest.hook, 1);
+  assert.equal(manifest["settings-hook"], 1);
+}
+
+async function assertCodexInstallWithInvalidHookConfig(home) {
+  await mkdir(path.join(home, ".codex"), { recursive: true });
+  await writeFile(path.join(home, ".codex", "AGENTS.md"), "# User Codex guidance\n");
+  await writeFile(path.join(home, ".codex", "hooks.json"), "{ not json\n");
+
+  await install("codex", home);
+
+  assert.equal(await readFile(path.join(home, ".codex", "hooks.json"), "utf8"), "{ not json\n");
+  assert.ok(existsSync(path.join(home, ".codex", "hooks", "scuba-guard.sh")));
 }
 
 async function addStaleManifestEntries(home, target) {
@@ -329,6 +453,21 @@ async function assertFileEqualsGit(file, gitRef) {
   const actual = await readFile(file, "utf8");
   const expected = gitShow(gitRef);
   assert.equal(actual, expected, `${path.relative(ROOT, file)} diverged from ${gitRef}`);
+}
+
+async function assertClaudeBaselineOrApprovedDelta(rel, file, gitRef) {
+  const actual = await readFile(file, "utf8");
+  const expected = gitShow(gitRef);
+  const approvedNeedles = APPROVED_CLAUDE_PROMPT_DIFFS.get(rel);
+  if (!approvedNeedles) {
+    assert.equal(actual, expected, `${rel} diverged from ${gitRef} without an approved prompt delta`);
+    return;
+  }
+
+  assert.notEqual(actual, expected, `${rel} is marked as an approved prompt delta but did not change`);
+  for (const needle of approvedNeedles) {
+    assert.ok(actual.includes(needle), `${rel} approved prompt delta is missing '${needle}'`);
+  }
 }
 
 function gitShow(gitRef) {

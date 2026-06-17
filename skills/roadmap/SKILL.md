@@ -41,6 +41,56 @@ where the emoji and `:::<stage>` always agree, from the fixed mapping (🟡 spec
 
 Write the roadmap (and the mirror) with the {{target.fileEditTools}}, never with Bash heredocs (`cat > f << EOF`): a heredoc silently truncates on a broken shell, landing a partial roadmap that reports success.
 
+## Lifecycle event vocabulary
+
+Every lifecycle transition has a named event. The roadmap and the thread's
+`status.md` must reflect the event before the manager reports it as true.
+
+Canonical events:
+
+- `spec.started` — architect dispatched for the spec.
+- `spec.reviewing` — spec-reviewer dispatched.
+- `spec.clean` — spec-reviewer returned CLEAN for the current spec.
+- `spec.waiting-user` — clean spec is waiting on user go/no-go.
+- `spec.approved` — user approved the reviewed spec.
+- `grooming.complete` — groomer produced the slice map for an approved epic spec.
+- `plan.started` — implementation plan drafting started.
+- `plan.reviewing` — plan-reviewer dispatched.
+- `plan.clean` — plan-reviewer returned CLEAN for the current plan.
+- `plan.waiting-user` — clean plan is waiting on user go/no-go.
+- `plan.approved` — user approved the reviewed plan.
+- `build.started` — a builder started a slice or single-PR chunk.
+- `acceptance.failed` — acceptance-verifier found drift or failed acceptance.
+- `acceptance.clean` — acceptance-verifier returned CLEAN for the current head.
+- `pr.opened` — PR is open and external review clock started.
+- `pr.reviewing` — internal hunters or external reviewer are active.
+- `pr.fixing` — REAL review findings are being repaired.
+- `pr.blocked` — PR is blocked on a decision, dependency, or unavailable reviewer.
+- `pr.merged` — story PR merged to integration branch, or integration PR merged by the user.
+- `durability.local-only` — durability mirror failed or has not pushed.
+- `durability.pushed` — durability mirror push verified by SHA.
+
+Each thread's `status.md` keeps the recovery fields the roadmap points to:
+
+```text
+stage: <spec|plan|execution|review|blocked|done|parked>
+event: <canonical event>
+branch: <branch or none>
+worktree: <absolute path or none>
+last_sha: <sha or none>
+spec: <path or none>
+plan: <path or none>
+review_profile: <light|standard|high-risk|none>
+next: <one concrete next action>
+blocker: <none or blocking decision/dependency>
+updated_at: <timestamp>
+```
+
+The roadmap tree stays scannable; it does not duplicate all of these fields.
+But every roadmap node must agree with the latest `stage` and `event` in the
+thread status. A fresh session should be able to read the roadmap, click into
+the status, and re-dispatch from those fields without transcript history.
+
 ## The chief of staff owns it; never blocks on it
 
 The chief of staff keeps the roadmap current as part of the monitor tick it already runs (per `process-health-monitor`): read each thread's real state from git and files, fold it into the tree. That's cheap and not extra blocking. When a pass is heavy — reconciling many agents' statuses into the tree, or running the durability mirror — it dispatches a `scribe` to do the typing while it stays free. It owns the roadmap's correctness whether it updates it itself or delegates; it never lets the roadmap go stale and never blocks on keeping it fresh.

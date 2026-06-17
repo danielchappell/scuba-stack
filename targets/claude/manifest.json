@@ -44,7 +44,9 @@
       "install": true,
       "event": "PreToolUse",
       "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
-      "script": "scuba-guard.sh"
+      "script": "scuba-guard.sh",
+      "configFile": "settings.json",
+      "configFormat": "claude-settings-json"
     }
   }
 }
