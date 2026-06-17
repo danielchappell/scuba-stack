@@ -11,7 +11,7 @@ Do not grill the user cold. People are poor at producing requirements in a vacuu
 
 ## Stay free; delegate the drafting
 
-You own the conversation, not the drafting. Hand the user's ask and pointers to context (the repo, this repo's target guidance file, the control plane) to an `intake-drafter` agent, which reads the context and writes a structured draft mandate (goal, assumptions, definition of done, forks with chosen defaults, scope and non-goals, open questions) to the control plane. It does the context-heavy work in its own window; you relay and present. This is the same split as the executive brief, where you present but the specialist renders. Your turn stays thin, so your context stays free for everything else in flight.
+You own the conversation, not the drafting. Hand the user's ask and pointers to context (the repo, this repo's `{{target.rootGuidanceFile}}`, the control plane) to an `intake-drafter` agent, which reads the context and writes a structured draft mandate (goal, assumptions, definition of done, forks with chosen defaults, scope and non-goals, open questions) to the control plane. It does the context-heavy work in its own window; you relay and present. This is the same split as the executive brief, where you present but the specialist renders. Your turn stays thin, so your context stays free for everything else in flight.
 
 ## Scale the drafting to the stakes
 

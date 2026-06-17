@@ -39,7 +39,7 @@ where the emoji and `:::<stage>` always agree, from the fixed mapping (🟡 spec
 
 **The roadmap is the index, not the detail.** The per-thread recovery fields — branch, worktree, last commit SHA, next step, blocker — live in each thread's `teams/<team>/<thread>.status.md`, so the tree stays scannable while recovery still has every field it needs. Keep it for the human's glance: they read this instead of asking you.
 
-Write the roadmap (and the mirror) with the target platform's file-edit tools, never with Bash heredocs (`cat > f << EOF`): a heredoc silently truncates on a broken shell, landing a partial roadmap that reports success.
+Write the roadmap (and the mirror) with the {{target.fileEditTools}}, never with Bash heredocs (`cat > f << EOF`): a heredoc silently truncates on a broken shell, landing a partial roadmap that reports success.
 
 ## The chief of staff owns it; never blocks on it
 
@@ -55,7 +55,7 @@ The mirror is the **one write the chief of staff must grant scope for**: dispatc
 
 **Collision-safe and cold-start.** Create the orphan state branch if it's missing (cold start). **Never check the state branch out in the primary tree** — always the side worktree — so a many-worktree concurrent run can't wedge it: checking the state branch out in the primary tree empties the code index for every other agent reading there (eval N11). The side worktree is the only place the mirror is ever materialized.
 
-Recovery is a **re-dispatch, not a reconnect** — a killed worker can't be reattached. Fetch, restore `.scuba/` from the branch, read `roadmap.md`, and for each non-terminal thread: verify its worktree still exists and its branch head matches the recorded last SHA, then spawn a *fresh* worker in that thread's role with a mandate built from its `status.md` — goal, `next` step, worktree. (This is why every thread's status keeps a current `next`.) The exact git recipe is operator mechanics — see the repo's `RUNBOOK` and target guidance file.
+Recovery is a **re-dispatch, not a reconnect** — a killed worker can't be reattached. Fetch, restore `.scuba/` from the branch, read `roadmap.md`, and for each non-terminal thread: verify its worktree still exists and its branch head matches the recorded last SHA, then spawn a *fresh* worker in that thread's role with a mandate built from its `status.md` — goal, `next` step, worktree. (This is why every thread's status keeps a current `next`.) The exact git recipe is operator mechanics — see the repo's `RUNBOOK`/`{{target.rootGuidanceFile}}`.
 
 **Brief lifecycle trim (not a timer).** A brief is surfaced only while its node is on the active roadmap (current epics plus the "Completed this session" grouping). On re-anchor — the next session, or done-work aging out during normal upkeep — completed nodes and their brief links drop off the active tree; the `.scuba/briefs/` file remains but is no longer pointed at. Un-surfaced is harmless: a brief nothing links to can't confuse the AI. File deletion is optional disk hygiene a scribe can sweep on request — never a timer; a skill has no clock.
 

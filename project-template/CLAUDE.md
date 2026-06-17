@@ -1,8 +1,6 @@
 # <Project> — Project Context
 
-This file is the Claude-target rendering of `project-template/TEMPLATE.md`.
-
-Project-specific only. The Scuba Stack rules live globally after installation; do not repeat them here.
+Project-specific only. The Scuba Stack rules live globally at ~/.claude — do not repeat them here.
 
 ## Stack & conventions
 -
@@ -13,13 +11,13 @@ Project-specific only. The Scuba Stack rules live globally after installation; d
 - lint:
 
 ## External PR reviewer (used by `ship-gate`)
-How this repo opens a PR and works with its external automated reviewer. Fill in for your setup; `ship-gate` supplies the ritual, this supplies the commands.
+How this repo opens a PR and works with its external automated reviewer (e.g. Codex). Fill in for your setup; `ship-gate` supplies the ritual, this supplies the commands.
 - Open the PR (starts the external reviewer): `gh pr create --fill --base <base> --head <branch>` — `<base>` is the **integration branch** for a story PR, `main` for the integration→main PR.
 - Where the reviewer posts: <e.g. PR review comments, or a check named "...">
 - Read its findings: `gh pr view <num> --comments` (or `gh api repos/<owner>/<repo>/pulls/<num>/comments`)
-- Re-trigger after a fix: <e.g. push new commits, or reviewer-specific review command/comment>
+- Re-trigger after a fix: <e.g. push new commits, or comment "@codex review" on the PR>
 - Typical latency: <so the internal swarm and reconcile are timed against it>
-- **Reviews non-`main`-base PRs too?** The integration-branch model puts story PRs on a non-default base. Confirm your reviewer comments on those and do **not** restrict it to the default branch, or story PRs ship unreviewed.
+- **Reviews non-`main`-base PRs too?** The integration-branch model puts story PRs on a non-default base. Confirm your reviewer comments on those (Codex does by default) and do **not** restrict it to the default branch, or story PRs ship unreviewed.
 - **Closeout verifies LIVE (the `ship-gate` DoD wiring).** `ship-gate` requires the closeout to re-verify against the current head, never from a prior report's numbers. The mechanics:
   - **Paginate review threads to exhaustion.** A `first:100` that returns exactly 100 nodes is an early-stop in disguise. Drive the GraphQL `reviewThreads` connection by `pageInfo.hasNextPage` (cursor through `endCursor` until false), or cross-check the returned `nodes` count against `totalCount` — never assume a single page is the whole set:
     ```

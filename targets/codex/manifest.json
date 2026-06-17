@@ -18,6 +18,16 @@
   },
   "settingsFile": "config.toml",
   "worktreeSegment": ".codex/worktrees",
+  "terms": {
+    "rootGuidanceFile": "AGENTS.md",
+    "rootGuidancePath": "~/.codex/AGENTS.md",
+    "userScopeHome": "~/.codex",
+    "fileEditTools": "Codex file-edit tools",
+    "highJudgmentModel": "GPT-5.5",
+    "externalReviewerExample": "Codex",
+    "externalReviewerRetriggerExample": "comment \"@codex review\" on the PR",
+    "externalReviewerNonMainDefault": "Codex does by default"
+  },
   "models": {
     "lead": "inherit",
     "high_judgment": "gpt-5.5"

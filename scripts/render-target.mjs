@@ -60,9 +60,40 @@ function requireProfile(map, name, label, file) {
   return map[name];
 }
 
+function renderText(text, file) {
+  return text.replace(/\{\{target\.([A-Za-z0-9_]+)\}\}/g, (_, key) => {
+    const value = manifest.terms?.[key];
+    if (typeof value !== "string") {
+      throw new Error(`${file} references unknown target term '${key}'`);
+    }
+    return value;
+  });
+}
+
+async function copyRenderedMarkdownTree(sourceDir, destDir) {
+  await mkdir(destDir, { recursive: true });
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      await copyRenderedMarkdownTree(sourcePath, destPath);
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".md")) {
+      const source = await readFile(sourcePath, "utf8");
+      await writeFile(destPath, renderText(source, sourcePath));
+      continue;
+    }
+    if (entry.isFile()) {
+      await cp(sourcePath, destPath);
+    }
+  }
+}
+
 async function renderPointer() {
   const pointer = await readFile(path.join(ROOT, "core", "pointer.md"), "utf8");
-  await writeFile(path.join(outDir, manifest.pointerFile), pointer);
+  await writeFile(path.join(outDir, manifest.pointerFile), renderText(pointer, "core/pointer.md"));
 }
 
 async function renderAgents() {
@@ -73,6 +104,8 @@ async function renderAgents() {
     const sourcePath = path.join(ROOT, "agents", file);
     const source = await readFile(sourcePath, "utf8");
     const { data, body } = parseFrontmatter(source, sourcePath);
+    const description = renderText(data.description, file);
+    const renderedBody = renderText(body, file);
     const model = requireProfile(manifest.models, data.model_profile, "model_profile", file);
     const tools = requireProfile(manifest.toolProfiles, data.tool_profile, "tool_profile", file);
 
@@ -80,11 +113,11 @@ async function renderAgents() {
       const rendered =
         "---\n" +
         yamlLine("name", data.name) +
-        yamlLine("description", data.description) +
+        yamlLine("description", description) +
         yamlLine("tools", tools.join(", ")) +
         yamlLine("model", model) +
         "---\n" +
-        body;
+        renderedBody;
       await writeFile(path.join(agentsOut, file), rendered);
       continue;
     }
@@ -93,11 +126,11 @@ async function renderAgents() {
       const reasoning = manifest.reasoning?.[data.model_profile];
       const rendered = [
         `name = ${tomlString(data.name)}`,
-        `description = ${tomlString(data.description)}`,
+        `description = ${tomlString(description)}`,
         model === "inherit" ? null : `model = ${tomlString(model)}`,
         reasoning ? `model_reasoning_effort = ${tomlString(reasoning)}` : null,
         `# Scuba tool profile: ${data.tool_profile}; Codex maps this role to the ${tools} built-in posture.`,
-        `developer_instructions = ${tomlLiteralMultiline(body.trimStart())}`,
+        `developer_instructions = ${tomlLiteralMultiline(renderedBody.trimStart())}`,
         ""
       ].filter(Boolean).join("\n");
       await writeFile(path.join(agentsOut, file.replace(/\.md$/, ".toml")), rendered);
@@ -109,9 +142,7 @@ async function renderAgents() {
 }
 
 async function renderSkills() {
-  await cp(path.join(ROOT, "skills"), path.join(outDir, manifest.skillDir), {
-    recursive: true
-  });
+  await copyRenderedMarkdownTree(path.join(ROOT, "skills"), path.join(outDir, manifest.skillDir));
 }
 
 async function renderHooks() {
@@ -140,7 +171,7 @@ async function renderProjectTemplate() {
   const template = await readFile(path.join(ROOT, "project-template", "TEMPLATE.md"), "utf8");
   const templateOut = path.join(outDir, "project-template");
   await mkdir(templateOut, { recursive: true });
-  await writeFile(path.join(templateOut, manifest.rootInstructionFile), template);
+  await writeFile(path.join(templateOut, manifest.rootInstructionFile), renderText(template, "project-template/TEMPLATE.md"));
 }
 
 async function renderManifest() {

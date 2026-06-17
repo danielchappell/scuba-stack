@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CLAUDE_BEHAVIOR_BASELINE = "3926827c74ab4adba42abfa715d130dd69860df9";
 const tests = [];
 
 test("neutral frontmatter and target profile mappings are valid", async () => {
@@ -148,6 +149,32 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
     assert.ok(!existsSync(path.join(codexOut, "hooks", "scuba-guard.sh")));
     assert.ok(existsSync(path.join(claudeOut, "project-template", "CLAUDE.md")));
     assert.ok(existsSync(path.join(codexOut, "project-template", "AGENTS.md")));
+  });
+});
+
+test("Claude render preserves the pre-agnostic behavioral prompt text", async () => {
+  await withTempDir("claude-baseline", async (tmp) => {
+    const out = path.join(tmp, "claude");
+    await run("node", ["scripts/render-target.mjs", "claude", out]);
+
+    await assertFileEqualsGit(
+      path.join(out, "scuba.md"),
+      `${CLAUDE_BEHAVIOR_BASELINE}:global-CLAUDE.md`
+    );
+
+    for (const file of gitList("agents")) {
+      if (!file.endsWith(".md")) continue;
+      await assertFileEqualsGit(path.join(out, file), `${CLAUDE_BEHAVIOR_BASELINE}:${file}`);
+    }
+
+    for (const file of gitList("skills")) {
+      await assertFileEqualsGit(path.join(out, file), `${CLAUDE_BEHAVIOR_BASELINE}:${file}`);
+    }
+
+    await assertFileEqualsGit(
+      path.join(out, "project-template", "CLAUDE.md"),
+      `${CLAUDE_BEHAVIOR_BASELINE}:project-template/CLAUDE.md`
+    );
   });
 });
 
@@ -296,6 +323,36 @@ async function readManifest(file) {
     counts[kind] = (counts[kind] ?? 0) + 1;
   }
   return counts;
+}
+
+async function assertFileEqualsGit(file, gitRef) {
+  const actual = await readFile(file, "utf8");
+  const expected = gitShow(gitRef);
+  assert.equal(actual, expected, `${path.relative(ROOT, file)} diverged from ${gitRef}`);
+}
+
+function gitShow(gitRef) {
+  const result = spawnSync("git", ["show", gitRef], {
+    cwd: ROOT,
+    encoding: "utf8"
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`git show ${gitRef} exited ${result.status}\n${result.stderr.trim()}`);
+  }
+  return result.stdout;
+}
+
+function gitList(prefix) {
+  const result = spawnSync("git", ["ls-tree", "-r", "--name-only", CLAUDE_BEHAVIOR_BASELINE, prefix], {
+    cwd: ROOT,
+    encoding: "utf8"
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`git ls-tree ${prefix} exited ${result.status}\n${result.stderr.trim()}`);
+  }
+  return result.stdout.trim().split(/\n/).filter(Boolean);
 }
 
 async function loadTargetManifests() {

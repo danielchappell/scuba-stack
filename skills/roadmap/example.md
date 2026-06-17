@@ -3,7 +3,7 @@
 
 ## Now active
 - 🟢 **Deploy ordering** — deploy-order fix verifying on staging; `ship-gate` next. → [status](teams/golive/deploy.status.md)
-- 🔎 **Inc-3 fixes** — PR [#31](https://github.com/acme/helio/pull/31) up, internal swarm CLEAN, awaiting external reviewer.
+- 🔎 **Inc-3 fixes** — PR [#31](https://github.com/acme/helio/pull/31) up, internal swarm CLEAN, awaiting {{target.externalReviewerExample}}.
 - 🟡 **CMS content model** — architect drafting the spec. → [spec (draft)](teams/cms/spec.md)
 - ⛔ **Concierge rate-limit** — blocked on the network-exposure fix merging.
 

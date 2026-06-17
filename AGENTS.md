@@ -60,7 +60,6 @@ Targets translate the core:
 
 - Claude remains the default target and preserves existing install locations under `~/.claude`.
 - Codex installs global guidance to `~/.codex`, custom agents to `~/.codex/agents`, and skills to `~/.agents/skills`.
-- Codex subagent use requires explicit user intent in current Codex behavior; Scuba's Codex target should describe delegation as an elevated operating mode, not an unconditional override.
 
 ## Invariants
 

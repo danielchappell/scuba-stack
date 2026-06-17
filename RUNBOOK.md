@@ -13,7 +13,7 @@
 
 Claude remains the most complete target. It installs the verified `scuba-guard.sh` `PreToolUse` adapter and wires it into `~/.claude/settings.json` when `jq` is available.
 
-Codex renders guidance, skills, and custom agents. Codex subagents currently require explicit user intent; use Scuba's full delegation model when the user asks for parallel agents, review swarms, or an elevated operating mode. Codex hook enforcement is policy-only until a target adapter is implemented and tested.
+Codex renders guidance, skills, and custom agents. Codex hook enforcement is policy-only until a target adapter is implemented and tested.
 
 ## Verification
 

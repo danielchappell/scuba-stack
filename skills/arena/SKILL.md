@@ -1,6 +1,6 @@
 ---
 name: arena
-description: A play for genuinely uncertain design problems. Spawn several independent attempts at the same task in parallel, evaluate them against one bar, pick a base, and fold the best pieces of the others into it. Use only when the right shape is unclear and the cost of several parallel high-judgment worker attempts is justified, never for routine work. Run by a manager or the orchestrator, since it spawns workers.
+description: A play for genuinely uncertain design problems. Spawn several independent attempts at the same task in parallel, evaluate them against one bar, pick a base, and fold the best pieces of the others into it. Use only when the right shape is unclear and the cost of several parallel {{target.highJudgmentModel}} attempts is justified, never for routine work. Run by a manager or the orchestrator, since it spawns workers.
 ---
 
 # Arena
@@ -9,7 +9,7 @@ When the right design is genuinely unclear and getting it wrong is expensive, it
 
 ## When to reach for it
 
-Use arena only when the shape is honestly uncertain and a wrong choice is costly to unwind: a load-bearing abstraction, a tricky algorithm, a design with no obvious frontrunner. For routine work with a clear approach, it's pure waste. It runs several high-judgment workers in parallel, so the uncertainty has to be real enough to justify the spend.
+Use arena only when the shape is honestly uncertain and a wrong choice is costly to unwind: a load-bearing abstraction, a tricky algorithm, a design with no obvious frontrunner. For routine work with a clear approach, it's pure waste. It runs several {{target.highJudgmentModel}} agents in parallel, so the uncertainty has to be real enough to justify the spend.
 
 ## How it runs
 

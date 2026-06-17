@@ -17,6 +17,16 @@
   },
   "settingsFile": "settings.json",
   "worktreeSegment": ".claude/worktrees",
+  "terms": {
+    "rootGuidanceFile": "CLAUDE.md",
+    "rootGuidancePath": "~/.claude/CLAUDE.md",
+    "userScopeHome": "~/.claude",
+    "fileEditTools": "`Write`/`Edit` tools",
+    "highJudgmentModel": "Opus",
+    "externalReviewerExample": "Codex",
+    "externalReviewerRetriggerExample": "comment \"@codex review\" on the PR",
+    "externalReviewerNonMainDefault": "Codex does by default"
+  },
   "models": {
     "lead": "inherit",
     "high_judgment": "opus"
