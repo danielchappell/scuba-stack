@@ -13,8 +13,8 @@
 
 set -uo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-GUARD="$HERE/scuba-guard.sh"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+GUARD="$HERE/targets/claude/hooks/scuba-guard.sh"
 
 # Two kinds of fixture paths, kept deliberately separate:
 #

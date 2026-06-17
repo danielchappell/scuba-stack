@@ -1,0 +1,40 @@
+{
+  "id": "claude",
+  "displayName": "Claude Code",
+  "homeDir": ".claude",
+  "rootInstructionFile": "CLAUDE.md",
+  "pointerFile": "scuba.md",
+  "pointerImportLine": "@~/.claude/scuba.md",
+  "rootMode": "import",
+  "agentFormat": "claude-md",
+  "skillDir": "skills",
+  "agentDir": "agents",
+  "hookDir": "hooks",
+  "install": {
+    "skillDir": "skills",
+    "agentDir": "agents",
+    "hookDir": "hooks"
+  },
+  "settingsFile": "settings.json",
+  "worktreeSegment": ".claude/worktrees",
+  "models": {
+    "lead": "inherit",
+    "high_judgment": "opus"
+  },
+  "toolProfiles": {
+    "design": ["Read", "Grep", "Glob", "Bash", "Write", "Edit", "WebSearch", "WebFetch"],
+    "read_run": ["Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"],
+    "write_notes": ["Read", "Grep", "Glob", "Bash", "Write"],
+    "write_notes_web": ["Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch", "Write"],
+    "write_brief": ["Read", "Grep", "Glob", "Write"],
+    "code_writer": ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"]
+  },
+  "hooks": {
+    "scuba-guard": {
+      "install": true,
+      "event": "PreToolUse",
+      "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+      "script": "scuba-guard.sh"
+    }
+  }
+}

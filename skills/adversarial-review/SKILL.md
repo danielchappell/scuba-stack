@@ -47,4 +47,4 @@ This full machinery is for risky work: anything touching isolation, security, co
 
 ## Keep tooling out of here
 
-How you query, resolve, or re-trigger a specific external reviewer is project mechanics and belongs in the project's CLAUDE.md, not in this procedure.
+How you query, resolve, or re-trigger a specific external reviewer is project mechanics and belongs in the project's target guidance file, not in this procedure.

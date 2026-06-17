@@ -56,7 +56,7 @@ Which state populates which point:
 
 ## Output
 
-Write the finished brief to `.scuba/briefs/<epic>.html` as a single self-contained file (fonts via CDN, no external assets) — one file per epic, **updated in place** at v2 rather than started over. Never check it in. Then hand the path to the chief of staff to present. Write it with the `Write`/`Edit` tools, never with Bash heredocs (`cat > f << EOF`) — a heredoc silently truncates on a broken shell, landing a partial brief that reports success. Do not present it to the user yourself; that's the chief of staff's job.
+Write the finished brief to `.scuba/briefs/<epic>.html` as a single self-contained file (fonts via CDN, no external assets) — one file per epic, **updated in place** at v2 rather than started over. Never check it in. Then hand the path to the chief of staff to present. Write it with the target platform's file-edit tools, never with Bash heredocs (`cat > f << EOF`) — a heredoc silently truncates on a broken shell, landing a partial brief that reports success. Do not present it to the user yourself; that's the chief of staff's job.
 
 ## Anti-patterns
 
