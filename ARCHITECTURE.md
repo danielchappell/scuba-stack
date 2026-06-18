@@ -28,12 +28,13 @@ Each target manifest maps the neutral concepts to a concrete runtime:
 - `tool_profile` values become platform tool lists, built-in agent postures, or equivalent capabilities.
 - The neutral pointer becomes the target's global guidance file.
 - Neutral agents render into the target's agent format.
+- Target-owned prompts render only for targets that declare them.
 - Hook policy becomes a target adapter only when the target hook contract is represented by target-specific fixtures and install status is truthful.
 
 Current targets:
 
 - Claude: Markdown agents, concrete tool lists, `model: opus`, and a verified `PreToolUse` hook adapter.
-- Codex: TOML custom agents, `gpt-5.5` high-reasoning profile, skills installed under `~/.agents/skills`, and a Codex-native `PreToolUse` adapter installed through `~/.codex/hooks.json` pending user trust.
+- Codex: TOML custom agents, `gpt-5.5` extra-high-reasoning profile, skills installed under `~/.agents/skills`, a `/prompts:scuba` session initializer installed to `~/.codex/prompts/scuba.md`, and a Codex-native `PreToolUse` adapter installed through `~/.codex/hooks.json` pending user trust.
 
 ## Installer
 
@@ -41,15 +42,17 @@ Current targets:
 
 1. `scripts/render-target.mjs <target> <out-dir>` creates a target bundle.
 2. The installer removes files recorded in the previous target manifest.
-3. It copies rendered skills, agents, pointer, and verified hook adapters.
+3. It copies rendered skills, agents, optional target prompts, pointer, and verified hook adapters.
 4. It wires the target root guidance using the target manifest's root mode: Claude appends one import line if absent, while Codex maintains a marked Scuba block.
 5. It surgically merges verified hook entries with temp-then-`mv`: Claude into `settings.json`, Codex into `hooks.json`.
 
-This preserves the original safety property: the installer touches only Scuba-owned files and never overwrites the user's own guidance.
+This preserves the original safety property: the installer touches only Scuba-owned files and never overwrites the user's own guidance. Codex subagent fan-out is controlled by Codex's own `agents.max_threads`, `agents.max_depth`, and `agents.job_max_runtime_seconds` settings; Scuba documents those knobs but does not rewrite `config.toml` until a safe TOML merge path exists.
+
+Codex custom prompts are explicit session initializers, not universal new-thread hooks. The target installs `scuba.md` so the user can initialize a thread once with `/prompts:scuba`; generic Codex New Thread cannot currently be made fully Scuba-active by installer alone.
 
 ## Why Profiles
 
-Concrete model names and tool names are not universal. A neutral worker role says it needs `model_profile: high_judgment` and `tool_profile: code_writer`; target manifests decide whether that means Claude Opus with `Write/Edit/Bash`, Codex `gpt-5.5` high reasoning, or another platform's equivalent.
+Concrete model names and tool names are not universal. A neutral worker role says it needs `model_profile: high_judgment` and `tool_profile: code_writer`; target manifests decide whether that means Claude Opus with `Write/Edit/Bash`, Codex `gpt-5.5` extra-high reasoning, or another platform's equivalent.
 
 ## Hook Boundary
 

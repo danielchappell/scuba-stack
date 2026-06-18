@@ -167,6 +167,11 @@ async function renderHooks() {
   }
 }
 
+async function renderPrompts() {
+  if (!manifest.promptDir) return;
+  await copyRenderedMarkdownTree(path.join(ROOT, "targets", target, "prompts"), path.join(outDir, manifest.promptDir));
+}
+
 async function renderProjectTemplate() {
   const template = await readFile(path.join(ROOT, "project-template", "TEMPLATE.md"), "utf8");
   const templateOut = path.join(outDir, "project-template");
@@ -184,5 +189,6 @@ await renderManifest();
 await renderPointer();
 await renderSkills();
 await renderAgents();
+await renderPrompts();
 await renderHooks();
 await renderProjectTemplate();

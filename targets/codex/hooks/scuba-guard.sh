@@ -5,7 +5,7 @@
 #   - Bash and apply_patch both carry input in tool_input.command.
 #   - apply_patch may match as apply_patch, Edit, or Write, but the canonical
 #     tool_name is apply_patch.
-#   - The worktree convention is <project>/.codex/worktrees/agent-*/.
+#   - Codex worker worktrees live under <project>/.codex/worktrees/<name>/.
 #   - Deny by emitting Codex hookSpecificOutput JSON for PreToolUse.
 #
 # Infrastructure failures fail open with a loud stderr warning. Policy
@@ -78,22 +78,41 @@ has_scuba_component() {
   return 1
 }
 
-in_a_worktree() {
-  case "$1" in
-    */"$WORKTREES_SEGMENT"/agent-*) return 0 ;;
+worktree_root_for_path() {
+  local p="$1" prefix rest name
+  case "$p" in
+    "$WORKTREES_SEGMENT"/*)
+      prefix=""
+      rest="${p#"$WORKTREES_SEGMENT"/}"
+      ;;
+    */"$WORKTREES_SEGMENT"/*)
+      prefix="${p%%/"$WORKTREES_SEGMENT"/*}"
+      rest="${p#"$prefix/$WORKTREES_SEGMENT/"}"
+      ;;
+    *) return 1 ;;
   esac
-  return 1
+  name="${rest%%/*}"
+  case "$name" in
+    ""|.|..) return 1 ;;
+  esac
+  if [ -n "$prefix" ]; then
+    printf '%s/%s/%s' "$prefix" "$WORKTREES_SEGMENT" "$name"
+  else
+    printf '%s/%s' "$WORKTREES_SEGMENT" "$name"
+  fi
+}
+
+in_a_worktree() {
+  worktree_root_for_path "$1" >/dev/null
 }
 
 allowed_worktree_root() {
-  local dir="${cwd:-}"
+  local dir="${cwd:-}" root
   while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-    case "$dir" in
-      */"$WORKTREES_SEGMENT"/agent-*)
-        printf '%s' "$dir"
-        return 0
-        ;;
-    esac
+    if root="$(worktree_root_for_path "$dir")"; then
+      printf '%s' "$root"
+      return 0
+    fi
     dir="$(dirname "$dir")"
   done
   return 1

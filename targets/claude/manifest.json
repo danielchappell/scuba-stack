@@ -21,6 +21,7 @@
     "rootGuidanceFile": "CLAUDE.md",
     "rootGuidancePath": "~/.claude/CLAUDE.md",
     "userScopeHome": "~/.claude",
+    "installedSkillDir": "~/.claude/skills",
     "fileEditTools": "`Write`/`Edit` tools",
     "highJudgmentModel": "Opus",
     "externalReviewerExample": "Codex",

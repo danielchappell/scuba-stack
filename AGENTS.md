@@ -35,7 +35,7 @@ The core is target-neutral:
 Targets translate the core:
 
 - `targets/claude/manifest.json` maps profiles to Claude tools/models, Markdown agent files, Claude install paths, and the verified Claude hook adapter.
-- `targets/codex/manifest.json` maps profiles to Codex custom-agent TOML, Codex install paths, and the Codex hook adapter installed through `~/.codex/hooks.json` pending `/hooks` trust.
+- `targets/codex/manifest.json` maps profiles to Codex custom-agent TOML, Codex prompt install paths, Codex install paths, and the Codex hook adapter installed through `~/.codex/hooks.json` pending `/hooks` trust.
 - `scripts/render-target.mjs` is the only renderer. Do not hand-maintain generated target artifacts in user homes.
 
 ## Installer Invariants
@@ -60,7 +60,7 @@ Targets translate the core:
 ## Current Target Notes
 
 - Claude remains the default target and preserves existing install locations under `~/.claude`.
-- Codex installs global guidance to `~/.codex`, custom agents to `~/.codex/agents`, skills to `~/.agents/skills`, and the hook adapter to `~/.codex/hooks` with config in `~/.codex/hooks.json`.
+- Codex installs global guidance to `~/.codex`, custom agents to `~/.codex/agents`, launcher prompts to `~/.codex/prompts`, skills to `~/.agents/skills`, and the hook adapter to `~/.codex/hooks` with config in `~/.codex/hooks.json`.
 
 ## Invariants
 

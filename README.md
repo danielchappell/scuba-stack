@@ -6,7 +6,7 @@ Scuba Stack turns one user-facing agent into a small, disciplined organization: 
 
 ## Status
 
-Experimental. The Claude target preserves existing install behavior while adding the new lifecycle gates. The Codex target renders guidance, skills, custom agents, and a Codex-native hook adapter. Codex hook status after install is **installed, pending trust** until the user reviews/trusts it with `/hooks`; treat it as operational only after trust and a live smoke.
+Experimental. The Claude target preserves existing install behavior while adding the new lifecycle gates. The Codex target renders guidance, skills, custom agents, a `/prompts:scuba` session initializer, and a Codex-native hook adapter. Codex hook status after install is **installed, pending trust** until the user reviews/trusts it with `/hooks`; treat it as operational only after trust and a live smoke.
 
 ## Quickstart
 
@@ -36,15 +36,15 @@ The target-neutral source lives in:
 Target-specific translation lives in:
 
 - `targets/claude/manifest.json` and `targets/claude/hooks/`.
-- `targets/codex/manifest.json`.
+- `targets/codex/manifest.json`, `targets/codex/prompts/`, and `targets/codex/hooks/`.
 - `scripts/render-target.mjs`.
 
 ## Targets
 
-| Target | Guidance | Skills | Agents | Hooks |
-|---|---|---|---|---|
-| Claude | `~/.claude/CLAUDE.md` imports `~/.claude/scuba.md` | `~/.claude/skills` | Markdown agents in `~/.claude/agents` | Verified `PreToolUse` adapter installed |
-| Codex | `~/.codex/AGENTS.md` contains a managed Scuba block | `~/.agents/skills` | TOML custom agents in `~/.codex/agents` | `~/.codex/hooks.json` entry installed pending `/hooks` trust |
+| Target | Guidance | Skills | Agents | Prompts | Hooks |
+|---|---|---|---|---|---|
+| Claude | `~/.claude/CLAUDE.md` imports `~/.claude/scuba.md` | `~/.claude/skills` | Markdown agents in `~/.claude/agents` | none | Verified `PreToolUse` adapter installed |
+| Codex | `~/.codex/AGENTS.md` contains a managed Scuba block | `~/.agents/skills` | TOML custom agents in `~/.codex/agents` | `~/.codex/prompts/scuba.md` | `~/.codex/hooks.json` entry installed pending `/hooks` trust |
 
 Concrete model and tool choices are target manifest data. The neutral role files name profiles such as `high_judgment` and `code_writer`; renderers map those profiles to each platform.
 
@@ -59,6 +59,8 @@ You -> Chief of Staff -> Team Manager mode -> Workers
 - The chief of staff owns intake, dispatch depth, monitoring, and decisions.
 - Manager mode owns an epic end to end, slices it into independently shippable work, and runs review loops.
 - Workers perform bounded roles such as `architect`, `spec-reviewer`, `groomer`, `plan-reviewer`, `senior-implementer`, `acceptance-verifier`, `hunter`, `bug-fixer`, `steward`, `researcher`, `brief-specialist`, and `scribe`.
+- Codex sessions are initialized with `/prompts:scuba` once per new thread; after that the conversation should stay in the Scuba operating model.
+- Codex subagent caps are configured through Codex's `agents.max_threads`, `agents.max_depth`, and `agents.job_max_runtime_seconds`; Scuba workers should be closed after completion so they do not consume the open-thread cap.
 
 State lives in `.scuba/`, especially `.scuba/roadmap.md`, so work survives compaction, resumes, and parallel worktrees.
 

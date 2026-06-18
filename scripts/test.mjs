@@ -66,6 +66,10 @@ test("neutral frontmatter and target profile mappings are valid", async () => {
     assert.ok(manifest.install?.skillDir, `${manifest.id} is missing install.skillDir`);
     assert.ok(manifest.install?.agentDir, `${manifest.id} is missing install.agentDir`);
     assert.ok(manifest.install?.hookDir, `${manifest.id} is missing install.hookDir`);
+    assert.ok(manifest.terms?.installedSkillDir, `${manifest.id} is missing terms.installedSkillDir`);
+    if (manifest.promptDir) {
+      assert.ok(manifest.install?.promptDir, `${manifest.id} promptDir requires install.promptDir`);
+    }
     if (manifest.rootMode === "import") {
       assert.ok(manifest.pointerImportLine, `${manifest.id} import mode requires pointerImportLine`);
     }
@@ -175,7 +179,7 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
       assert.match(codexText, new RegExp(`^name = ${escapeRegExp(JSON.stringify(core.name))}$`, "m"));
       assert.match(codexText, /^developer_instructions = '''\n/m);
       assert.match(codexText, /^model = "gpt-5\.5"$/m);
-      assert.match(codexText, /^model_reasoning_effort = "high"$/m);
+      assert.match(codexText, /^model_reasoning_effort = "xhigh"$/m);
       assert.match(codexText, new RegExp(`# Scuba tool profile: ${core.tool_profile};`));
       assert.ok(!codexText.startsWith("---\n"), `${file} rendered as TOML, not Markdown`);
     }
@@ -186,6 +190,23 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
     assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.policy.md")));
     assert.ok(existsSync(path.join(claudeOut, "project-template", "CLAUDE.md")));
     assert.ok(existsSync(path.join(codexOut, "project-template", "AGENTS.md")));
+    assert.ok(existsSync(path.join(codexOut, "prompts", "scuba.md")));
+
+    const scubaPrompt = await readFile(path.join(codexOut, "prompts", "scuba.md"), "utf8");
+    assert.match(scubaPrompt, /description: Initialize this Codex thread under Scuba Stack orchestration\./);
+    assert.match(scubaPrompt, /rest of this session/);
+    assert.match(scubaPrompt, /chief-of-staff\/SKILL\.md/);
+    assert.match(scubaPrompt, /refuses required delegation/);
+    assert.doesNotMatch(scubaPrompt, /\$ARGUMENTS/);
+    assert.doesNotMatch(scubaPrompt, /User request:/);
+    assert.doesNotMatch(scubaPrompt, /argument-hint:/);
+
+    const claudePointer = await readFile(path.join(claudeOut, "scuba.md"), "utf8");
+    const codexPointer = await readFile(path.join(codexOut, "scuba.md"), "utf8");
+    assert.match(claudePointer, /`~\/\.claude\/skills\/<skill-name>\/SKILL\.md`/);
+    assert.match(claudePointer, /`~\/\.claude\/skills\/chief-of-staff\/SKILL\.md`/);
+    assert.match(codexPointer, /`~\/\.agents\/skills\/<skill-name>\/SKILL\.md`/);
+    assert.match(codexPointer, /`~\/\.agents\/skills\/chief-of-staff\/SKILL\.md`/);
   });
 });
 
@@ -362,6 +383,7 @@ async function assertCodexInstall(home) {
 
   const root = await readFile(path.join(home, ".codex", "AGENTS.md"), "utf8");
   assert.match(root, /^# User Codex guidance/m);
+  assert.match(root, /`~\/\.agents\/skills\/chief-of-staff\/SKILL\.md`/);
   assert.equal(count(root, "<!-- scuba-stack:start -->"), 1);
   assert.equal(count(root, "<!-- scuba-stack:end -->"), 1);
   assert.equal(count(root, "@~/.codex/scuba.md"), 0);
@@ -371,30 +393,38 @@ async function assertCodexInstall(home) {
   const sourceAgents = (await agentFiles()).map((file) => file.replace(/\.md$/, ".toml")).sort();
   assert.deepEqual(await dirNames(path.join(home, ".agents", "skills")), sourceSkills);
   assert.deepEqual(await fileNames(path.join(home, ".codex", "agents")), sourceAgents);
+  assert.deepEqual(await fileNames(path.join(home, ".codex", "prompts")), ["scuba.md"]);
   assert.ok(existsSync(path.join(home, ".codex", "hooks", "scuba-guard.sh")));
   assert.ok(!existsSync(path.join(home, ".codex", "agents", "stale-agent.toml")));
   assert.ok(!existsSync(path.join(home, ".agents", "skills", "stale-skill")));
+  assert.ok(!existsSync(path.join(home, ".codex", "prompts", "stale-prompt.md")));
   assert.ok(!existsSync(path.join(home, ".codex", "hooks", "stale-hook.sh")));
   assert.equal(await countMatching(path.join(home, ".codex"), /^hooks\.json\.scuba-bak\./), 1);
 
+  const prompt = await readFile(path.join(home, ".codex", "prompts", "scuba.md"), "utf8");
+  assert.match(prompt, /Start the rest of this session under Scuba Stack/);
+  assert.doesNotMatch(prompt, /\$ARGUMENTS/);
+
   const hooks = await readJson(path.join(home, ".codex", "hooks.json"));
   assert.equal(
-    hooks.PreToolUse.filter((entry) =>
+    hooks.hooks.PreToolUse.filter((entry) =>
       (entry.hooks ?? []).some((hook) => (hook.command ?? "").endsWith("/scuba-guard.sh"))
     ).length,
     1
   );
   assert.equal(
-    hooks.PreToolUse.filter((entry) =>
+    hooks.hooks.PreToolUse.filter((entry) =>
       (entry.hooks ?? []).some((hook) => hook.command === "/usr/bin/true")
     ).length,
     1
   );
+  assert.equal(hooks.PreToolUse, undefined);
 
   const manifest = await readManifest(path.join(home, ".codex", ".scuba-manifest"));
   assert.equal(manifest.skill, sourceSkills.length);
   assert.equal(manifest.agent, sourceAgents.length);
   assert.equal(manifest.hook, 1);
+  assert.equal(manifest.prompt, 1);
   assert.equal(manifest["settings-hook"], 1);
 }
 
@@ -425,11 +455,13 @@ async function addStaleManifestEntries(home, target) {
   await writeFile(path.join(home, ".codex", "agents", "stale-agent.toml"), "stale\n");
   await mkdir(path.join(home, ".agents", "skills", "stale-skill"), { recursive: true });
   await writeFile(path.join(home, ".agents", "skills", "stale-skill", "SKILL.md"), "stale\n");
+  await mkdir(path.join(home, ".codex", "prompts"), { recursive: true });
+  await writeFile(path.join(home, ".codex", "prompts", "stale-prompt.md"), "stale\n");
   await mkdir(path.join(home, ".codex", "hooks"), { recursive: true });
   await writeFile(path.join(home, ".codex", "hooks", "stale-hook.sh"), "stale\n");
   await appendFile(
     path.join(home, ".codex", ".scuba-manifest"),
-    "agent:stale-agent.toml\nskill:stale-skill\nhook:stale-hook.sh\n"
+    "agent:stale-agent.toml\nskill:stale-skill\nprompt:stale-prompt.md\nhook:stale-hook.sh\n"
   );
 }
 

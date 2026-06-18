@@ -64,9 +64,11 @@ IMPORT_LINE="$(manifest_get_optional pointerImportLine)"
 ROOT_MODE="$(manifest_get rootMode)"
 RENDER_SKILL_DIR="$(manifest_get skillDir)"
 RENDER_AGENT_DIR="$(manifest_get agentDir)"
+RENDER_PROMPT_DIR="$(manifest_get_optional promptDir)"
 RENDER_HOOK_DIR="$(manifest_get hookDir)"
 INSTALL_SKILL_DIR="$(manifest_get install.skillDir)"
 INSTALL_AGENT_DIR="$(manifest_get install.agentDir)"
+INSTALL_PROMPT_DIR="$(manifest_get_optional install.promptDir)"
 INSTALL_HOOK_DIR="$(manifest_get install.hookDir)"
 SETTINGS_FILE="$(manifest_get_optional settingsFile)"
 
@@ -76,6 +78,8 @@ POINTER="$DEST/$POINTER_FILE"
 MANIFEST="$DEST/.scuba-manifest"
 SKILL_DEST="$DEST/$INSTALL_SKILL_DIR"
 AGENT_DEST="$DEST/$INSTALL_AGENT_DIR"
+PROMPT_DEST=""
+[ -z "$INSTALL_PROMPT_DIR" ] || PROMPT_DEST="$DEST/$INSTALL_PROMPT_DIR"
 HOOK_DEST="$DEST/$INSTALL_HOOK_DIR"
 
 HOOK_INSTALL="$(manifest_get_optional hooks.scuba-guard.install)"
@@ -93,6 +97,7 @@ LEGACY_IMPORT_LINES_JSON="$(manifest_get_optional legacyImportLines)"
 
 mkdir -p "$DEST"
 mkdir -p "$SKILL_DEST" "$AGENT_DEST"
+[ -z "$PROMPT_DEST" ] || mkdir -p "$PROMPT_DEST"
 [ "$HOOKS_ENABLED" -eq 0 ] || mkdir -p "$HOOK_DEST"
 
 BUILD="$(mktemp -d "${TMPDIR:-/tmp}/scuba-render.XXXXXX")"
@@ -122,8 +127,19 @@ remove_hook_config_entry() {
       fi
       ;;
     codex-hooks-json)
-      if jq '(.PreToolUse // []) as $p
-             | .PreToolUse = [ $p[]
+      if jq '
+             def event_names:
+               ["PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact",
+                "PostCompact", "UserPromptSubmit", "SubagentStop", "Stop",
+                "SessionStart", "SubagentStart"];
+             reduce event_names[] as $event (.;
+               if has($event) then
+                 .hooks[$event] = ((.hooks[$event] // []) + .[$event])
+                 | del(.[$event])
+               else . end
+             )
+             | (.hooks.PreToolUse // []) as $p
+             | .hooks.PreToolUse = [ $p[]
                  | select( ((.hooks // []) | map(.command // "")
                             | any(endswith("/'"$script"'"))) | not ) ]' \
             "$HOOK_CONFIG" > "$tmp" 2>/dev/null; then
@@ -144,6 +160,13 @@ if [ -f "$MANIFEST" ]; then
     case "$entry" in
       skill:*)         rm -rf "$SKILL_DEST/${entry#skill:}" ;;
       agent:*)         rm -f  "$AGENT_DEST/${entry#agent:}" ;;
+      prompt:*)
+        if [ -n "$PROMPT_DEST" ]; then
+          rm -f "$PROMPT_DEST/${entry#prompt:}"
+        else
+          rm -f "$DEST/prompts/${entry#prompt:}"
+        fi
+        ;;
       hook:*)          rm -f  "$HOOK_DEST/${entry#hook:}" ;;
       settings-hook:*)
         prev_hook_script="${entry#settings-hook:}"
@@ -171,6 +194,15 @@ for f in "$BUILD/$RENDER_AGENT_DIR"/*; do
   cp "$f" "$AGENT_DEST/$name"
   echo "agent:$name" >> "$MANIFEST"
 done
+
+if [ -n "$RENDER_PROMPT_DIR" ] && [ -n "$PROMPT_DEST" ]; then
+  for f in "$BUILD/$RENDER_PROMPT_DIR"/*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    cp "$f" "$PROMPT_DEST/$name"
+    echo "prompt:$name" >> "$MANIFEST"
+  done
+fi
 
 # 3) Install and wire hooks when the target has a verified adapter.
 HOOK_INSTALLED_MSG="skipped"
@@ -221,8 +253,18 @@ if [ "$HOOKS_ENABLED" -eq 1 ]; then
           ;;
         codex-hooks-json)
           if jq --arg matcher "$HOOK_MATCHER" --arg cmd "$HOOK_CMD" --arg script "$HOOK_SCRIPT" '
-                (.PreToolUse // []) as $p
-                | .PreToolUse = ([ $p[]
+                def event_names:
+                  ["PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact",
+                   "PostCompact", "UserPromptSubmit", "SubagentStop", "Stop",
+                   "SessionStart", "SubagentStart"];
+                reduce event_names[] as $event (.;
+                  if has($event) then
+                    .hooks[$event] = ((.hooks[$event] // []) + .[$event])
+                    | del(.[$event])
+                  else . end
+                )
+                | (.hooks.PreToolUse // []) as $p
+                | .hooks.PreToolUse = ([ $p[]
                     | select( ((.hooks // []) | map(.command // "")
                                | any(endswith("/" + $script))) | not ) ]
                     + [ { "matcher": $matcher,
@@ -276,8 +318,9 @@ esac
 
 s="$(grep -c '^skill:' "$MANIFEST" || true)"
 a="$(grep -c '^agent:' "$MANIFEST" || true)"
+p="$(grep -c '^prompt:' "$MANIFEST" || true)"
 h="$(grep -c '^hook:' "$MANIFEST" || true)"
-echo "Scuba Stack installed/updated for $TARGET_NAME: $s skills, $a agents, $h hook file(s). Safe to re-run anytime."
+echo "Scuba Stack installed/updated for $TARGET_NAME: $s skills, $a agents, $p prompt(s), $h hook file(s). Safe to re-run anytime."
 echo
 
 case "$TARGET" in
@@ -307,6 +350,7 @@ case "$TARGET" in
       *)
         echo "Codex hook adapter was not wired. Re-run install after checking the target manifest." ;;
     esac
-    echo "Restart Codex so ~/.codex/AGENTS.md, ~/.agents/skills, ~/.codex/agents, and ~/.codex/hooks.json are reloaded."
+    echo "Start a Codex Scuba session with /prompts:scuba once after restart."
+    echo "Restart Codex so ~/.codex/AGENTS.md, ~/.agents/skills, ~/.codex/agents, ~/.codex/prompts, and ~/.codex/hooks.json are reloaded."
     ;;
 esac

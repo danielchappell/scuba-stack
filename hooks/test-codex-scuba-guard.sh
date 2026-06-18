@@ -10,6 +10,7 @@ GUARD="$HERE/targets/codex/hooks/scuba-guard.sh"
 
 PROJECT="/proj"
 WORKTREE="$PROJECT/.codex/worktrees/agent-deadbeef"
+CODEX_WORKTREE="$PROJECT/.codex/worktrees/codex-session-init-repair"
 PRIMARY_SRC="$PROJECT/services/catalog"
 SCUBA_FILE="$PROJECT/.scuba/teams/x/status.md"
 TEMP_FILE="/tmp/scuba-codex-guard/new.ts"
@@ -77,11 +78,17 @@ run "git -C primary reset" deny \
 run "apply_patch relative in worktree" allow \
   "$(ja "$(patch_add 'services/catalog/new.ts')" "$WORKTREE")"
 
+run "apply_patch relative in codex worktree" allow \
+  "$(ja "$(patch_add 'services/catalog/new.ts')" "$CODEX_WORKTREE")"
+
 run "apply_patch absolute in worktree" allow \
   "$(ja "$(patch_update "$WORKTREE/services/catalog/app.ts")" "$WORKTREE")"
 
 run "apply_patch primary leak" deny \
   "$(ja "$(patch_add "$PRIMARY_SRC/leak.ts")" "$WORKTREE")"
+
+run "apply_patch primary leak from codex worktree" deny \
+  "$(ja "$(patch_add "$PRIMARY_SRC/leak.ts")" "$CODEX_WORKTREE")"
 
 run "apply_patch .scuba" allow \
   "$(ja "$(patch_update "$SCUBA_FILE")" "$WORKTREE")"

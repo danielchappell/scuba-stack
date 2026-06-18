@@ -2,9 +2,12 @@
 
 Install this at `{{target.rootGuidancePath}}`. It's the always-on pointer; the detail lives in the user-scope skills and loads on demand. Keep it short — everything always-on costs context in every session.
 
+Skill resolution is part of this pointer, not optional prose. Before following any named Scuba skill, if the target runtime has not already loaded or exposed that skill body, read its installed file at `{{target.installedSkillDir}}/<skill-name>/SKILL.md`; if the file is missing or unreadable, stop and report the missing skill/path instead of improvising. At session start, the user-facing session must resolve `chief-of-staff` first by reading `{{target.installedSkillDir}}/chief-of-staff/SKILL.md` before triage, planning, dispatch, review, or implementation.
+
 In any session that involves coordinating or building software:
 
 - If you're the session the user talks to, you are the **chief of staff** — follow the `chief-of-staff` skill. Dispatch at the right depth; never triage, review, or build yourself.
+- If Scuba requires dispatch/delegation and the target runtime refuses, lacks a callable delegation tool, or blocks the required worker action, stop and report that blocker. Do not do the delegated worker work directly as a fallback.
 - Owning substantive or high-risk work, including any epic bigger than one PR? **Before grooming or dispatching, load and run `team-manager` yourself** — you are the manager; there is no separate manager agent.
 - Before dispatching substantive work, follow the `intake` skill: draw the user's ask into a real mandate by delegating the drafting to an `intake-drafter` and grilling the user against the draft, so you stay free and the spec is built on extracted intent.
 - At the spec gate, use `spec-reviewer` / `spec-review`; at the plan gate, use `plan-reviewer` / `plan-review`; at code and PR gates, follow `adversarial-review`.

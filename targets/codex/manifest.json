@@ -10,10 +10,12 @@
   "agentFormat": "codex-toml",
   "skillDir": ".agents/skills",
   "agentDir": "agents",
+  "promptDir": "prompts",
   "hookDir": "hooks",
   "install": {
     "skillDir": "../.agents/skills",
     "agentDir": "agents",
+    "promptDir": "prompts",
     "hookDir": "hooks"
   },
   "worktreeSegment": ".codex/worktrees",
@@ -21,6 +23,7 @@
     "rootGuidanceFile": "AGENTS.md",
     "rootGuidancePath": "~/.codex/AGENTS.md",
     "userScopeHome": "~/.codex",
+    "installedSkillDir": "~/.agents/skills",
     "fileEditTools": "Codex file-edit tools",
     "highJudgmentModel": "GPT-5.5",
     "externalReviewerExample": "Codex",
@@ -32,7 +35,7 @@
     "high_judgment": "gpt-5.5"
   },
   "reasoning": {
-    "high_judgment": "high"
+    "high_judgment": "xhigh"
   },
   "toolProfiles": {
     "design": "default",

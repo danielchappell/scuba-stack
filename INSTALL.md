@@ -38,6 +38,7 @@ Installs to:
 - `~/.codex/AGENTS.md` managed Scuba block
 - `~/.agents/skills/`
 - `~/.codex/agents/`
+- `~/.codex/prompts/scuba.md`
 - `~/.codex/hooks/`
 - `~/.codex/hooks.json` hook entry, when `jq` is available
 - `~/.codex/.scuba-manifest`
@@ -45,6 +46,12 @@ Installs to:
 Codex hook enforcement installs as **installed, pending trust**. After installing, restart Codex and use `/hooks` to review and trust the Scuba command hook. Treat enforcement as operational only after the hook is trusted and a live smoke confirms it fires in the current Codex environment.
 
 Scuba writes Codex hook configuration only to `~/.codex/hooks.json`, not `~/.codex/config.toml`.
+
+Start a Codex Desktop Scuba session by typing `/prompts:scuba` once in a new thread. That initializer loads the installed `chief-of-staff` skill, authorizes Scuba-required Codex delegation for the active session, and tells the lead to stop and report if Codex refuses required delegation. It does not bypass Codex sandbox, security, hook trust, or permission prompts.
+
+Codex does not currently expose an installer-level way to make every generic New Thread fully Scuba-active. The prompt initializer is the supported Desktop entrypoint.
+
+Codex subagent concurrency is controlled by Codex settings, not by Scuba role files. The supported knobs are `agents.max_threads`, `agents.max_depth`, and `agents.job_max_runtime_seconds` in Codex config. Completed agents must be closed after their output is captured so they stop counting against the open-thread cap.
 
 ## Render Without Installing
 
