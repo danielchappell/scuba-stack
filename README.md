@@ -73,8 +73,11 @@ node scripts/test.mjs
 bash -n install.sh
 node scripts/render-target.mjs claude /tmp/scuba-claude
 node scripts/render-target.mjs codex /tmp/scuba-codex
+node scripts/audit-codex-jsonl.mjs --list-recent
 bash hooks/test-scuba-guard.sh
 bash hooks/test-codex-scuba-guard.sh
 ```
 
 When adding a new platform, add a target manifest, write any target adapters under `targets/<target>/`, extend the renderer only where necessary, and keep the core files free of platform names.
+
+For Codex Desktop behavior audits, use `node scripts/audit-codex-jsonl.mjs <root-thread-id>` to reconstruct the root thread and descendant subagent sessions from `~/.codex/sessions` and `~/.codex/archived_sessions`.

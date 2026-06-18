@@ -28,6 +28,7 @@ node scripts/test.mjs
 bash -n install.sh
 node scripts/render-target.mjs claude /tmp/scuba-claude
 node scripts/render-target.mjs codex /tmp/scuba-codex
+node scripts/audit-codex-jsonl.mjs --list-recent
 bash hooks/test-scuba-guard.sh
 bash hooks/test-codex-scuba-guard.sh
 ```
@@ -39,6 +40,22 @@ Check rendered output shape:
 - Codex prompt `scuba.md` is installed under `~/.codex/prompts/` and does not require arguments.
 - Codex root guidance is inlined into a managed block in `~/.codex/AGENTS.md`; `@file` references are not treated as startup imports.
 - Codex rendered hooks include `scuba-guard.sh`; installed enforcement is pending `/hooks` trust until live-smoked.
+
+## Codex JSONL Audit
+
+Codex writes session JSONL under `~/.codex/sessions` and archived session JSONL under `~/.codex/archived_sessions`. To inspect whether a Scuba session actually spawned the expected subagents, first find the root thread id:
+
+```bash
+node scripts/audit-codex-jsonl.mjs --list-recent
+```
+
+Then render the parent/subagent audit tree:
+
+```bash
+node scripts/audit-codex-jsonl.mjs <root-thread-id> --out /tmp/scuba-codex-audit.md
+```
+
+The report uses operational metadata by default: parent/child thread ids, subagent nickname/role, task starts/completions, tool-call names, `.scuba` path evidence, worktree path evidence, and raw JSONL file paths for deeper inspection. It intentionally does not print raw transcript or reasoning text.
 
 ## Hook Verification
 
