@@ -158,7 +158,7 @@ is_tracked_code_path() {
 }
 
 contain_path() {
-  local raw="$1" path root
+  local raw="$1" path root target_root
   [ -n "$raw" ] || return 0
   path="$(canonicalize "$raw")"
 
@@ -170,6 +170,10 @@ contain_path() {
       return 0
     fi
     deny "apply_patch target '$path' is outside this agent's Codex worktree ('$root'). Code writes must stay inside your own worktree; .scuba/ and temp dirs are the only exceptions."
+  fi
+
+  if target_root="$(worktree_root_for_path "$path")"; then
+    return 0
   fi
 
   is_doc_path "$path" && return 0

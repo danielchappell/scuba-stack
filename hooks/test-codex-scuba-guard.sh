@@ -12,6 +12,8 @@ PROJECT="/proj"
 WORKTREE="$PROJECT/.codex/worktrees/agent-deadbeef"
 CODEX_WORKTREE="$PROJECT/.codex/worktrees/codex-session-init-repair"
 PRIMARY_SRC="$PROJECT/services/catalog"
+REAL_WORKTREE="$HERE/.codex/worktrees/live-worker"
+REAL_TRACKED_SRC="$HERE/scripts/test.mjs"
 SCUBA_FILE="$PROJECT/.scuba/teams/x/status.md"
 TEMP_FILE="/tmp/scuba-codex-guard/new.ts"
 
@@ -83,6 +85,15 @@ run "apply_patch relative in codex worktree" allow \
 
 run "apply_patch absolute in worktree" allow \
   "$(ja "$(patch_update "$WORKTREE/services/catalog/app.ts")" "$WORKTREE")"
+
+run "apply_patch relative worktree target from primary cwd" allow \
+  "$(ja "$(patch_update ".codex/worktrees/live-worker/scripts/test.mjs")" "$HERE")"
+
+run "apply_patch absolute worktree target from primary cwd" allow \
+  "$(ja "$(patch_update "$REAL_WORKTREE/scripts/test.mjs")" "$HERE")"
+
+run "apply_patch tracked source from primary cwd" deny \
+  "$(ja "$(patch_update "$REAL_TRACKED_SRC")" "$HERE")"
 
 run "apply_patch primary leak" deny \
   "$(ja "$(patch_add "$PRIMARY_SRC/leak.ts")" "$WORKTREE")"

@@ -197,6 +197,9 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
     assert.match(scubaPrompt, /rest of this session/);
     assert.match(scubaPrompt, /chief-of-staff\/SKILL\.md/);
     assert.match(scubaPrompt, /refuses required delegation/);
+    assert.match(scubaPrompt, /Do not block the lead thread on long-running subagents/);
+    assert.match(scubaPrompt, /wait_agent/);
+    assert.match(scubaPrompt, /Do not ask the user to type "continue"/);
     assert.doesNotMatch(scubaPrompt, /\$ARGUMENTS/);
     assert.doesNotMatch(scubaPrompt, /User request:/);
     assert.doesNotMatch(scubaPrompt, /argument-hint:/);
