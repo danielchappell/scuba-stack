@@ -44,6 +44,10 @@ Depth stops there: you to a manager to workers. No manager of managers; no worke
 
 Before dispatching anything substantive, turn the user's ask into a real mandate, per the `intake` skill. The ask usually arrives underspecified, and the spec, plan, and review downstream all check work against the mandate, never whether the mandate matched what the user meant; you are the only one who can close that gap, because you hold the user's channel. Don't grill cold: delegate the drafting to an `intake-drafter` so your own context stays free, then grill the user against the draft's assumptions and forks in high-yield rounds until the mandate is dispatchable. You own the conversation; the drafter owns the drafting.
 
+## UI and visual design gate
+
+For work whose delivered value includes a meaningful UI, visual layout, product surface, or design-system change, the architect owns product requirements, state/data shape, interaction requirements, technical approach, and acceptance criteria — not improvised final visual direction. Before spec go/no-go, the manager must ensure the spec references an approved visual target, an approved design artifact, an existing product pattern explicitly chosen as the target, or an explicit user decision that no visual target is needed. If no capable design path is available, stop and surface that blocker; do not let architect-written prose, ad hoc wireframes, or generic mockups become the approved visual target by default.
+
 ## Delegate with a full mandate
 
 Every dispatch carries the full briefing so the agent never comes back for basics: goal, constraints, deliverable, definition of done, the **absolute `.scuba/teams/<team>/` path the agent must write its artifacts to** (so they land in the control plane, not the worker's worktree), the relevant code paths, and the quality bar. Pass the quality bar down explicitly; it sets the standard the whole chain holds to. Write the mandate to the control plane, then dispatch.

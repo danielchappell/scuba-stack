@@ -27,6 +27,8 @@ Substantive and high-risk work moves through this executable order:
 
 For an epic, the user approves one reviewed epic spec before grooming, then one reviewed implementation plan after grooming that covers the slice map, dependencies, review profile, and per-slice acceptance gates. The user does not approve every slice plan unless a slice changes product/design direction. For a substantive single-PR chunk, use the same spec and plan approvals, but skip only grooming.
 
+For work with a meaningful UI, visual layout, product surface, or design-system change, spec approval also requires a visual-design gate: the spec must point to an approved visual target, approved design artifact, existing product pattern explicitly chosen as the target, or an explicit user decision that no visual target is needed. The architect can define requirements, interaction model, data/state shape, and acceptance criteria, but architect prose, ad hoc wireframes, and generic mockups are not an approved visual target by themselves. If no capable design path exists, stop and surface that blocker before spec approval.
+
 Gate loops:
 
 - Dispatch `architect` to write the spec. Dispatch a fresh `spec-reviewer` and loop findings back to the architect until the spec-review verdict is CLEAN. Then ask the user for spec go/no-go.
