@@ -27,6 +27,10 @@ const APPROVED_CLAUDE_PROMPT_DIFFS = new Map([
     "implemented code and PR diffs",
     "Edge cases are not optional"
   ]],
+  ["agents/intake-drafter.md", [
+    "Challenge packet",
+    "must not be empty for substantive asks"
+  ]],
   ["agents/steward.md", [
     "acceptance-verifier",
     "post-fix"
@@ -38,6 +42,11 @@ const APPROVED_CLAUDE_PROMPT_DIFFS = new Map([
   ["skills/chief-of-staff/SKILL.md", [
     "Lifecycle contract",
     "Substantive work follows the full lifecycle"
+  ]],
+  ["skills/intake/SKILL.md", [
+    "zero-question intake",
+    "challenge packet",
+    "failed intake"
   ]],
   ["skills/roadmap/SKILL.md", [
     "Lifecycle event vocabulary",
@@ -224,6 +233,17 @@ test("lifecycle hardening contracts are present in rendered prompts", async () =
     assert.match(chief, /architect spec -> spec-reviewer CLEAN -> user spec go\/no-go/);
     assert.match(chief, /Tiny/);
     assert.match(chief, /High-risk/);
+
+    const intake = await readFile(path.join(out, "skills", "intake", "SKILL.md"), "utf8");
+    assert.match(intake, /Substantive intake cannot be zero-question intake/);
+    assert.match(intake, /challenge packet/);
+    assert.match(intake, /assumption audit/);
+    assert.match(intake, /confirmation\/correction opportunity/);
+    assert.match(intake, /failed intake/);
+
+    const intakeDrafter = await readFile(path.join(out, "agents", "intake-drafter.md"), "utf8");
+    assert.match(intakeDrafter, /Challenge packet/);
+    assert.match(intakeDrafter, /must not be empty for substantive asks/);
 
     const team = await readFile(path.join(out, "skills", "team-manager", "SKILL.md"), "utf8");
     assert.match(team, /post-fix acceptance verification/);

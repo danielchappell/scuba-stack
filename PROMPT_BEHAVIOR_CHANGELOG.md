@@ -5,6 +5,24 @@ the Claude behavior baseline:
 
 - Baseline commit: `3926827c74ab4adba42abfa715d130dd69860df9`
 
+## 2026-06-21 Intake Challenge Floor
+
+Intentional changes:
+
+- Require substantive intake to include a compact challenge packet after a
+  draft is on the table, so it cannot silently dispatch after zero user
+  confirmation.
+- Require the intake drafter to emit a non-empty `Challenge packet` section
+  for substantive asks, phrased as confirmation when the inferred answers are
+  obvious.
+
+Non-goals:
+
+- No return to cold survey intake; the flow stays draft-first, high-yield, and
+  non-survey.
+- No change to the lifecycle order, dispatch ownership, or target rendering
+  format.
+
 ## 2026-06-17 Lifecycle Hardening
 
 Intentional changes:

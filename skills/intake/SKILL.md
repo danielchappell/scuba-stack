@@ -25,6 +25,12 @@ Present the draft to the user with every assumption and every fork surfaced at o
 
 The human channel is the real bottleneck, not your context. Drafters parallelize; conversations with the user do not, because there is one of them. Run as many drafters as are useful, but expect to talk the user through one intake at a time, and make each round earn its interruption.
 
+## Challenge the draft
+
+Substantive intake cannot be zero-question intake. After a draft is on the table, present a compact challenge packet before dispatching anything substantive. Keep it draft-first and non-survey: it is not a questionnaire, it is the shortest useful challenge to the draft. The packet must cover an assumption audit, decision forks, missing edge cases/failure modes, and definition-of-done confirmation.
+
+If every answer seems obvious, state the inferred answers and ask the user to confirm/correct them rather than silently dispatching. A substantive intake that dispatches without at least one explicit confirmation/correction opportunity is a failed intake.
+
 ## Know when to stop
 
 Stop when the mandate is dispatchable: goal, constraints, definition of done, scope, and quality bar are settled enough to hand down, and the only residue is open questions that are genuinely the spec's to resolve. Don't interrogate past that point; over-grilling stalls forward motion as surely as dispatching a guess breaks it. Log the residual open questions in the mandate so the downstream spec carries them rather than losing them.

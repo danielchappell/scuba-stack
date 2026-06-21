@@ -17,6 +17,7 @@ Produce a draft mandate with these parts, and make the soft spots loud rather th
 - **Forks.** Each genuine decision point where the ask underdetermines the answer, with the options and the one you chose as the working default. These are what the user reacts to fastest.
 - **Scope and non-goals.** What's in, and explicitly what's out.
 - **Open questions.** Only the things no draft can settle, that genuinely need the user: real product or preference calls. Don't pad this with what you could have inferred.
+- **Challenge packet.** The compact grill the chief should present back to the user: assumption audit, decision forks, missing edge cases/failure modes, and definition-of-done confirmation. It must not be empty for substantive asks; if every answer seems obvious, phrase it as inferred answers for the chief to ask the user to confirm/correct.
 
 Surface all of it at once. A draft that dribbles out one question at a time wastes the user's attention; one that lays out every assumption and fork together makes a single round high-yield.
 
