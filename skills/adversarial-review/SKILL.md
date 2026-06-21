@@ -35,6 +35,10 @@ If an external automated reviewer is in the loop, run your own hunters at its gr
 
 At the PR gate, don't serialize against it: open the PR to start the external reviewer, run your own swarm over the diff in parallel using the selected review profile, and reconcile both streams into one deduped, classified worklist before fixing. The `ship-gate` skill is that full sequence.
 
+## Reaction hardening profile
+
+When an external comment round contains at least one REAL finding after the PR is already up, the confirming pass is not another generic swarm by default. Launch exactly two fresh hunters against the current head: one bug-class hunter that starts from the external comments and enumerates the whole violated invariant or pattern, and one adjacent-surface hunter that searches edge cases, regressions, and integration fallout around the touched diff. Both hunters still owe the usual coverage line and complete classified list. Their output is reconciled with the external comments before any fix begins, so the bug-fixer receives one worklist rather than a drip of reviewer demands.
+
 ## Non-vacuous fixes
 
 When a finding is fixed, prove the fix: write the test, see it RED, apply the fix, see it GREEN, then revert the fix and confirm it goes RED again before restoring. A test that passes without the fix proves nothing. Pin the test to the behavior or invariant that must hold, not to the specific patch, so the test survives a holistic refactor instead of locking a bolt-on in. Red, green, then refactor; the refactor step is where the change is integrated, and it is not optional.

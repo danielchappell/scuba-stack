@@ -23,6 +23,10 @@ const APPROVED_CLAUDE_PROMPT_DIFFS = new Map([
     "spec-reviewer",
     "acceptance-verifier"
   ]],
+  ["agents/bug-fixer.md", [
+    "PR hardening round",
+    "one cohesive fix commit"
+  ]],
   ["agents/hunter.md", [
     "implemented code and PR diffs",
     "Edge cases are not optional"
@@ -33,11 +37,15 @@ const APPROVED_CLAUDE_PROMPT_DIFFS = new Map([
   ]],
   ["agents/steward.md", [
     "acceptance-verifier",
-    "post-fix"
+    "post-fix",
+    "PR hardening round",
+    "exactly two fresh hunters"
   ]],
   ["skills/adversarial-review/SKILL.md", [
     "Review profiles",
-    "standard profile is three hunters"
+    "standard profile is three hunters",
+    "Reaction hardening profile",
+    "exactly two fresh hunters"
   ]],
   ["skills/chief-of-staff/SKILL.md", [
     "Lifecycle contract",
@@ -54,7 +62,9 @@ const APPROVED_CLAUDE_PROMPT_DIFFS = new Map([
   ]],
   ["skills/ship-gate/SKILL.md", [
     "acceptance-verifier",
-    "standard profile"
+    "standard profile",
+    "PR hardening rounds",
+    "one cohesive fix commit"
   ]],
   ["skills/team-manager/SKILL.md", [
     "Lifecycle contract",
@@ -254,6 +264,25 @@ test("lifecycle hardening contracts are present in rendered prompts", async () =
     assert.match(review, /Standard/);
     assert.match(review, /High-risk/);
     assert.match(review, /correctness\/edge cases/);
+    assert.match(review, /Reaction hardening profile/);
+    assert.match(review, /bug-class hunter/);
+    assert.match(review, /adjacent-surface hunter/);
+
+    const shipGate = await readFile(path.join(out, "skills", "ship-gate", "SKILL.md"), "utf8");
+    assert.match(shipGate, /PR hardening rounds/);
+    assert.match(shipGate, /current head SHA/);
+    assert.match(shipGate, /exactly two fresh adversarial reviewers/);
+    assert.match(shipGate, /one cohesive fix commit/);
+
+    const steward = await readFile(path.join(out, "agents", "steward.md"), "utf8");
+    assert.match(steward, /Run the PR hardening round/);
+    assert.match(steward, /exactly two fresh hunters/);
+    assert.match(steward, /whole reconciled worklist as one batch/);
+
+    const bugFixer = await readFile(path.join(out, "agents", "bug-fixer.md"), "utf8");
+    assert.match(bugFixer, /For a PR hardening round/);
+    assert.match(bugFixer, /comment-by-comment conditional patches/);
+    assert.match(bugFixer, /one cohesive fix commit/);
 
     const roadmap = await readFile(path.join(out, "skills", "roadmap", "SKILL.md"), "utf8");
     for (const event of [

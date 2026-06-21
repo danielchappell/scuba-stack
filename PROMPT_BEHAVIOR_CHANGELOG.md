@@ -5,6 +5,27 @@ the Claude behavior baseline:
 
 - Baseline commit: `3926827c74ab4adba42abfa715d130dd69860df9`
 
+## 2026-06-21 PR Hardening Rounds
+
+Intentional changes:
+
+- Treat any external code-review comment round with at least one REAL finding
+  as proof that the PR is not yet hardened, requiring a named hardening round
+  pinned to the current head SHA.
+- Require exactly two fresh adversarial reviewers for that round: one focused
+  on the bug class or violated invariant implied by the comments, and one on
+  adjacent edge cases, regressions, and integration fallout.
+- Require the steward to reconcile external comments and both hunter reports
+  into one deduped worklist, and the bug-fixer to repair the batch as one
+  holistic system fix rather than comment-by-comment conditionals.
+- Make one cohesive fix commit and one push the default output for a hardening
+  round, with splits treated as explicit exceptions.
+
+Non-goals:
+
+- No watcher, polling, webhook, or target wake mechanics are introduced here;
+  this only encodes the behavior once a comment round is known.
+
 ## 2026-06-21 Intake Challenge Floor
 
 Intentional changes:
