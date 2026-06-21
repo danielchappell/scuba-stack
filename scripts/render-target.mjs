@@ -92,6 +92,7 @@ async function copyRenderedMarkdownTree(sourceDir, destDir) {
 }
 
 async function renderPointer() {
+  if (manifest.rootMode === "manual") return;
   const pointer = await readFile(path.join(ROOT, "core", "pointer.md"), "utf8");
   await writeFile(path.join(outDir, manifest.pointerFile), renderText(pointer, "core/pointer.md"));
 }
@@ -142,7 +143,13 @@ async function renderAgents() {
 }
 
 async function renderSkills() {
-  await copyRenderedMarkdownTree(path.join(ROOT, "skills"), path.join(outDir, manifest.skillDir));
+  const skillsOut = path.join(outDir, manifest.skillDir);
+  await copyRenderedMarkdownTree(path.join(ROOT, "skills"), skillsOut);
+  try {
+    await copyRenderedMarkdownTree(path.join(ROOT, "targets", target, "skills"), skillsOut);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 }
 
 async function renderHooks() {

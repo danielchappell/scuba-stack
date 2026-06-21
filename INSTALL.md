@@ -34,11 +34,8 @@ First-time Claude setup still requires enabling Agent Teams in `~/.claude/settin
 
 Installs to:
 
-- `~/.codex/scuba.md`
-- `~/.codex/AGENTS.md` managed Scuba block
-- `~/.agents/skills/`
+- `~/.agents/skills/` including the manual `scuba` entrypoint skill
 - `~/.codex/agents/`
-- `~/.codex/prompts/scuba.md`
 - `~/.codex/hooks/`
 - `~/.codex/hooks.json` hook entry, when `jq` is available
 - `~/.codex/.scuba-manifest`
@@ -47,9 +44,7 @@ Codex hook enforcement installs as **installed, pending trust**. After installin
 
 Scuba writes Codex hook configuration only to `~/.codex/hooks.json`, not `~/.codex/config.toml`.
 
-Start a Codex Desktop Scuba session by typing `/prompts:scuba` once in a new thread. That initializer loads the installed `chief-of-staff` skill, authorizes Scuba-required Codex delegation for the active session, and tells the lead to stop and report if Codex refuses required delegation. It does not bypass Codex sandbox, security, hook trust, or permission prompts.
-
-Codex does not currently expose an installer-level way to make every generic New Thread fully Scuba-active. The prompt initializer is the supported Desktop entrypoint.
+Start a Codex Desktop Scuba session by invoking `$scuba` in a thread. That skill loads the installed `chief-of-staff` skill, authorizes Scuba-required delegation for the active session, and tells the lead to stop and report if Codex refuses required delegation. It does not bypass Codex sandbox, security, hook trust, or permission prompts. Ordinary new Codex threads remain non-Scuba unless `$scuba` is invoked.
 
 Codex subagent concurrency is controlled by Codex settings, not by Scuba role files. The supported knobs are `agents.max_threads`, `agents.max_depth`, and `agents.job_max_runtime_seconds` in Codex config. Completed agents must be closed after their output is captured so they stop counting against the open-thread cap.
 
@@ -72,7 +67,7 @@ bash hooks/test-codex-scuba-guard.sh
 ## Safety Rules
 
 - The installer removes only files listed in the previous `.scuba-manifest` for that target.
-- The target root guidance file is never overwritten wholesale. Claude appends an import line; Codex maintains a marked Scuba block because Codex does not auto-inline `@file` imports at startup.
+- The target root guidance file is never overwritten wholesale. Claude appends an import line; Codex does not install global Scuba guidance and removes stale Scuba managed blocks/imports from prior installs.
 - Back up an existing root guidance file before changing it, but do not create new backups when the rendered content is unchanged.
 - Settings/config merges must be surgical and temp-then-`mv`.
 - Target-specific compatibility branches belong in the installer or target adapter, not in core skills.

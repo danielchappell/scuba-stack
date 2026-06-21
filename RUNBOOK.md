@@ -8,14 +8,14 @@
 2. Restart the target runtime so guidance, skills, agents, and hooks are reloaded.
 3. Start a lead session:
    - Claude: ask it to act as Scuba Stack's chief of staff.
-   - Codex Desktop: type `/prompts:scuba` once in the new thread.
+   - Codex Desktop: invoke the `$scuba` skill in the thread that should use Scuba.
 4. For larger work, let the lead run manager mode, keep `.scuba/roadmap.md` current, and dispatch workers according to the target's subagent semantics.
 
 ## Target Notes
 
 Claude remains the most complete target. It installs the verified `scuba-guard.sh` `PreToolUse` adapter and wires it into `~/.claude/settings.json` when `jq` is available.
 
-Codex renders guidance, skills, custom agents, a `/prompts:scuba` session initializer, and a Codex-native hook adapter. After install, the hook is wired into `~/.codex/hooks.json` but remains pending trust until the user reviews/trusts it with `/hooks`. Treat it as operational only after trust and a live smoke.
+Codex installs skills, custom agents, the manual `$scuba` entrypoint skill, and a Codex-native hook adapter. It does not write Scuba into `~/.codex/AGENTS.md`, so ordinary new threads remain non-Scuba by default. After install, the hook is wired into `~/.codex/hooks.json` but remains pending trust until the user reviews/trusts it with `/hooks`. Treat it as operational only after trust and a live smoke.
 
 Codex subagent concurrency is capped by Codex settings. Use `agents.max_threads` to raise the number of open agent threads, keep `agents.max_depth` at `1` unless recursive delegation is deliberately needed, and set `agents.job_max_runtime_seconds` when CSV-style subagent jobs need longer runtimes. Close completed agents after their output is captured; completed open agents still count against the cap.
 
@@ -37,8 +37,8 @@ Check rendered output shape:
 
 - Claude agents are Markdown files with concrete `tools:` and `model: opus`.
 - Codex agents are TOML files with `name`, `description`, `developer_instructions`, `model`, and `model_reasoning_effort`.
-- Codex prompt `scuba.md` is installed under `~/.codex/prompts/` and does not require arguments.
-- Codex root guidance is inlined into a managed block in `~/.codex/AGENTS.md`; `@file` references are not treated as startup imports.
+- Codex installs the manual `scuba` skill under `~/.agents/skills/scuba/`; invoke it with `$scuba` only in threads that should use Scuba.
+- Codex root guidance is not modified for Scuba; the installer removes any stale Scuba managed block or legacy `@~/.codex/scuba.md` import from `~/.codex/AGENTS.md`.
 - Codex rendered hooks include `scuba-guard.sh`; installed enforcement is pending `/hooks` trust until live-smoked.
 
 ## Codex JSONL Audit

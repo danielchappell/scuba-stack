@@ -5,17 +5,17 @@
   "rootInstructionFile": "AGENTS.md",
   "pointerFile": "scuba.md",
   "pointerImportLine": "",
-  "rootMode": "managed-block",
-  "legacyImportLines": ["@~/.codex/scuba.md"],
+  "rootMode": "manual",
+  "legacyImportLines": [
+    "@~/.codex/scuba.md"
+  ],
   "agentFormat": "codex-toml",
   "skillDir": ".agents/skills",
   "agentDir": "agents",
-  "promptDir": "prompts",
   "hookDir": "hooks",
   "install": {
     "skillDir": "../.agents/skills",
     "agentDir": "agents",
-    "promptDir": "prompts",
     "hookDir": "hooks"
   },
   "worktreeSegment": ".codex/worktrees",

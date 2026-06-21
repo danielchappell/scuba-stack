@@ -5,16 +5,15 @@ import path from "node:path";
 const rootPath = process.env.ROOT_MD;
 const pointerPath = process.env.POINTER;
 const legacyImportLines = parseLegacyImportLines();
+const action = process.env.SCUBA_ROOT_ACTION || "install";
 
-if (!rootPath || !pointerPath) {
-  console.error("ROOT_MD and POINTER are required");
+if (!rootPath || (action !== "remove" && !pointerPath)) {
+  console.error("ROOT_MD and POINTER are required unless SCUBA_ROOT_ACTION=remove");
   process.exit(2);
 }
 
 const start = "<!-- scuba-stack:start -->";
 const end = "<!-- scuba-stack:end -->";
-const pointer = (await readFile(pointerPath, "utf8")).trimEnd();
-const block = `${start}\n${pointer}\n${end}`;
 
 let existing = "";
 let rootExists = true;
@@ -27,17 +26,23 @@ try {
 
 let next;
 const blockPattern = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}`);
-if (blockPattern.test(existing)) {
-  next = existing.replace(blockPattern, block);
+if (action === "remove") {
+  next = removeScubaBlockAndLegacyImports(existing, blockPattern);
 } else {
-  const withoutOldImports = legacyImportLines.length
-    ? existing
-        .split(/\r?\n/)
-        .filter((line) => !legacyImportLines.includes(line.trim()))
-        .join("\n")
-        .replace(/\n+$/, "")
-    : existing.replace(/\n+$/, "");
-  next = withoutOldImports ? `${withoutOldImports}\n\n${block}\n` : `${block}\n`;
+  const pointer = (await readFile(pointerPath, "utf8")).trimEnd();
+  const block = `${start}\n${pointer}\n${end}`;
+  if (blockPattern.test(existing)) {
+    next = existing.replace(blockPattern, block);
+  } else {
+    const withoutOldImports = legacyImportLines.length
+      ? existing
+          .split(/\r?\n/)
+          .filter((line) => !legacyImportLines.includes(line.trim()))
+          .join("\n")
+          .replace(/\n+$/, "")
+      : existing.replace(/\n+$/, "");
+    next = withoutOldImports ? `${withoutOldImports}\n\n${block}\n` : `${block}\n`;
+  }
 }
 
 if (next === existing) {
@@ -65,6 +70,17 @@ function parseLegacyImportLines() {
   }
   const single = process.env.IMPORT_LINE;
   return single ? [single] : [];
+}
+
+function removeScubaBlockAndLegacyImports(text, blockPattern) {
+  const withoutBlock = text.replace(blockPattern, "").replace(/\n{3,}/g, "\n\n");
+  const withoutOldImports = legacyImportLines.length
+    ? withoutBlock
+        .split(/\r?\n/)
+        .filter((line) => !legacyImportLines.includes(line.trim()))
+        .join("\n")
+    : withoutBlock;
+  return withoutOldImports.replace(/\n+$/, "") + (withoutOldImports.trim() ? "\n" : "");
 }
 
 function timestamp() {

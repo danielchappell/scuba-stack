@@ -299,9 +299,9 @@ if [ "$HOOKS_ENABLED" -eq 1 ]; then
 fi
 
 # 4) Install pointer and wire the target root guidance.
-cp "$BUILD/scuba.md" "$POINTER"
 case "$ROOT_MODE" in
   import)
+    cp "$BUILD/scuba.md" "$POINTER"
     if [ -f "$ROOT_MD" ]; then
       if ! grep -qF "$IMPORT_LINE" "$ROOT_MD"; then
         cp "$ROOT_MD" "$ROOT_MD.scuba-bak.$(date +%Y%m%d%H%M%S)"
@@ -312,7 +312,12 @@ case "$ROOT_MODE" in
     fi
     ;;
   managed-block)
+    cp "$BUILD/scuba.md" "$POINTER"
     ROOT_MD="$ROOT_MD" POINTER="$POINTER" LEGACY_IMPORT_LINES_JSON="$LEGACY_IMPORT_LINES_JSON" node "$HERE/scripts/update-codex-agents.mjs"
+    ;;
+  manual)
+    rm -f "$POINTER"
+    ROOT_MD="$ROOT_MD" LEGACY_IMPORT_LINES_JSON="$LEGACY_IMPORT_LINES_JSON" SCUBA_ROOT_ACTION=remove node "$HERE/scripts/update-codex-agents.mjs"
     ;;
 esac
 
@@ -350,7 +355,7 @@ case "$TARGET" in
       *)
         echo "Codex hook adapter was not wired. Re-run install after checking the target manifest." ;;
     esac
-    echo "Start a Codex Scuba session with /prompts:scuba once after restart."
-    echo "Restart Codex so ~/.codex/AGENTS.md, ~/.agents/skills, ~/.codex/agents, ~/.codex/prompts, and ~/.codex/hooks.json are reloaded."
+    echo "Scuba is no longer added to ~/.codex/AGENTS.md. Start it manually in a thread with the \$scuba skill."
+    echo "Restart Codex so ~/.agents/skills, ~/.codex/agents, and ~/.codex/hooks.json are reloaded."
     ;;
 esac

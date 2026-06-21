@@ -62,7 +62,7 @@ test("neutral frontmatter and target profile mappings are valid", async () => {
   const manifests = await loadTargetManifests();
 
   for (const manifest of manifests) {
-    assert.ok(["import", "managed-block"].includes(manifest.rootMode), `${manifest.id} has unsupported rootMode`);
+    assert.ok(["import", "managed-block", "manual"].includes(manifest.rootMode), `${manifest.id} has unsupported rootMode`);
     assert.ok(manifest.install?.skillDir, `${manifest.id} is missing install.skillDir`);
     assert.ok(manifest.install?.agentDir, `${manifest.id} is missing install.agentDir`);
     assert.ok(manifest.install?.hookDir, `${manifest.id} is missing install.hookDir`);
@@ -75,6 +75,9 @@ test("neutral frontmatter and target profile mappings are valid", async () => {
     }
     if (manifest.rootMode === "managed-block") {
       assert.ok(Array.isArray(manifest.legacyImportLines), `${manifest.id} managed-block mode requires legacyImportLines`);
+    }
+    if (manifest.rootMode === "manual") {
+      assert.ok(Array.isArray(manifest.legacyImportLines), `${manifest.id} manual mode requires legacyImportLines`);
     }
   }
 
@@ -100,7 +103,7 @@ test("neutral frontmatter and target profile mappings are valid", async () => {
     }
   }
 
-  for (const file of await skillFiles()) {
+  for (const file of await skillFiles({ includeTargetSkills: true })) {
     const source = await readFile(path.join(ROOT, file), "utf8");
     const { data } = parseFrontmatter(source, file);
     assert.deepEqual(Object.keys(data).sort(), ["description", "name"]);
@@ -190,26 +193,25 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
     assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.policy.md")));
     assert.ok(existsSync(path.join(claudeOut, "project-template", "CLAUDE.md")));
     assert.ok(existsSync(path.join(codexOut, "project-template", "AGENTS.md")));
-    assert.ok(existsSync(path.join(codexOut, "prompts", "scuba.md")));
+    assert.ok(!existsSync(path.join(claudeOut, "skills", "scuba", "SKILL.md")));
+    assert.ok(existsSync(path.join(codexOut, ".agents", "skills", "scuba", "SKILL.md")));
+    assert.ok(!existsSync(path.join(codexOut, "prompts", "scuba.md")));
+    assert.ok(!existsSync(path.join(codexOut, "scuba.md")));
 
-    const scubaPrompt = await readFile(path.join(codexOut, "prompts", "scuba.md"), "utf8");
-    assert.match(scubaPrompt, /description: Initialize this Codex thread under Scuba Stack orchestration\./);
-    assert.match(scubaPrompt, /rest of this session/);
-    assert.match(scubaPrompt, /chief-of-staff\/SKILL\.md/);
-    assert.match(scubaPrompt, /refuses required delegation/);
-    assert.match(scubaPrompt, /Do not block the lead thread on long-running subagents/);
-    assert.match(scubaPrompt, /wait_agent/);
-    assert.match(scubaPrompt, /Do not ask the user to type "continue"/);
-    assert.doesNotMatch(scubaPrompt, /\$ARGUMENTS/);
-    assert.doesNotMatch(scubaPrompt, /User request:/);
-    assert.doesNotMatch(scubaPrompt, /argument-hint:/);
+    const scubaSkill = await readFile(path.join(codexOut, ".agents", "skills", "scuba", "SKILL.md"), "utf8");
+    assert.match(scubaSkill, /description: Initialize the current session under Scuba Stack only when the user explicitly invokes Scuba/);
+    assert.match(scubaSkill, /rest of this session/);
+    assert.match(scubaSkill, /chief-of-staff\/SKILL\.md/);
+    assert.match(scubaSkill, /refuses required delegation/);
+    assert.match(scubaSkill, /Do not block the lead thread on long-running workers/);
+    assert.match(scubaSkill, /Do not ask the user to type "continue"/);
+    assert.doesNotMatch(scubaSkill, /\$ARGUMENTS/);
+    assert.doesNotMatch(scubaSkill, /User request:/);
+    assert.doesNotMatch(scubaSkill, /argument-hint:/);
 
     const claudePointer = await readFile(path.join(claudeOut, "scuba.md"), "utf8");
-    const codexPointer = await readFile(path.join(codexOut, "scuba.md"), "utf8");
     assert.match(claudePointer, /`~\/\.claude\/skills\/<skill-name>\/SKILL\.md`/);
     assert.match(claudePointer, /`~\/\.claude\/skills\/chief-of-staff\/SKILL\.md`/);
-    assert.match(codexPointer, /`~\/\.agents\/skills\/<skill-name>\/SKILL\.md`/);
-    assert.match(codexPointer, /`~\/\.agents\/skills\/chief-of-staff\/SKILL\.md`/);
   });
 });
 
@@ -347,7 +349,7 @@ async function assertClaudeInstall(home) {
   assert.equal(count(root, "@~/.claude/scuba.md"), 1);
   assert.equal(await countMatching(path.join(home, ".claude"), /^CLAUDE\.md\.scuba-bak\./), 1);
 
-  const sourceSkills = await skillNames();
+  const sourceSkills = await targetSkillNames("claude");
   const sourceAgents = await agentFiles();
   assert.deepEqual(await dirNames(path.join(home, ".claude", "skills")), sourceSkills);
   assert.deepEqual(await fileNames(path.join(home, ".claude", "agents")), sourceAgents);
@@ -366,7 +368,7 @@ async function assertCodexInstall(home) {
   await mkdir(path.join(home, ".codex"), { recursive: true });
   await writeFile(
     path.join(home, ".codex", "AGENTS.md"),
-    "# User Codex guidance\n\n@~/.codex/scuba.md\n"
+    "# User Codex guidance\n\n@~/.codex/scuba.md\n\n<!-- scuba-stack:start -->\nstale scuba block\n<!-- scuba-stack:end -->\n"
   );
   await writeFile(
     path.join(home, ".codex", "hooks.json"),
@@ -386,17 +388,18 @@ async function assertCodexInstall(home) {
 
   const root = await readFile(path.join(home, ".codex", "AGENTS.md"), "utf8");
   assert.match(root, /^# User Codex guidance/m);
-  assert.match(root, /`~\/\.agents\/skills\/chief-of-staff\/SKILL\.md`/);
-  assert.equal(count(root, "<!-- scuba-stack:start -->"), 1);
-  assert.equal(count(root, "<!-- scuba-stack:end -->"), 1);
+  assert.doesNotMatch(root, /chief-of-staff\/SKILL\.md/);
+  assert.equal(count(root, "<!-- scuba-stack:start -->"), 0);
+  assert.equal(count(root, "<!-- scuba-stack:end -->"), 0);
   assert.equal(count(root, "@~/.codex/scuba.md"), 0);
   assert.equal(await countMatching(path.join(home, ".codex"), /^AGENTS\.md\.scuba-bak\./), 1);
 
-  const sourceSkills = await skillNames();
+  const sourceSkills = await targetSkillNames("codex");
   const sourceAgents = (await agentFiles()).map((file) => file.replace(/\.md$/, ".toml")).sort();
   assert.deepEqual(await dirNames(path.join(home, ".agents", "skills")), sourceSkills);
   assert.deepEqual(await fileNames(path.join(home, ".codex", "agents")), sourceAgents);
-  assert.deepEqual(await fileNames(path.join(home, ".codex", "prompts")), ["scuba.md"]);
+  assert.deepEqual(await fileNames(path.join(home, ".codex", "prompts")), []);
+  assert.ok(existsSync(path.join(home, ".agents", "skills", "scuba", "SKILL.md")));
   assert.ok(existsSync(path.join(home, ".codex", "hooks", "scuba-guard.sh")));
   assert.ok(!existsSync(path.join(home, ".codex", "agents", "stale-agent.toml")));
   assert.ok(!existsSync(path.join(home, ".agents", "skills", "stale-skill")));
@@ -404,9 +407,10 @@ async function assertCodexInstall(home) {
   assert.ok(!existsSync(path.join(home, ".codex", "hooks", "stale-hook.sh")));
   assert.equal(await countMatching(path.join(home, ".codex"), /^hooks\.json\.scuba-bak\./), 1);
 
-  const prompt = await readFile(path.join(home, ".codex", "prompts", "scuba.md"), "utf8");
-  assert.match(prompt, /Start the rest of this session under Scuba Stack/);
-  assert.doesNotMatch(prompt, /\$ARGUMENTS/);
+  const scubaSkill = await readFile(path.join(home, ".agents", "skills", "scuba", "SKILL.md"), "utf8");
+  assert.match(scubaSkill, /Start the rest of this session under Scuba Stack/);
+  assert.match(scubaSkill, /only when the user explicitly invokes Scuba/);
+  assert.ok(!existsSync(path.join(home, ".codex", "scuba.md")));
 
   const hooks = await readJson(path.join(home, ".codex", "hooks.json"));
   assert.equal(
@@ -427,7 +431,7 @@ async function assertCodexInstall(home) {
   assert.equal(manifest.skill, sourceSkills.length);
   assert.equal(manifest.agent, sourceAgents.length);
   assert.equal(manifest.hook, 1);
-  assert.equal(manifest.prompt, 1);
+  assert.equal(manifest.prompt ?? 0, 0);
   assert.equal(manifest["settings-hook"], 1);
 }
 
@@ -569,9 +573,20 @@ async function agentFiles() {
   return (await readdir(path.join(ROOT, "agents"))).filter((file) => file.endsWith(".md")).sort();
 }
 
-async function skillFiles() {
-  const names = await skillNames();
-  return names.map((name) => path.join("skills", name, "SKILL.md"));
+async function skillFiles({ includeTargetSkills = false } = {}) {
+  const files = (await skillNames()).map((name) => path.join("skills", name, "SKILL.md"));
+  if (!includeTargetSkills) return files;
+
+  const targetDir = path.join(ROOT, "targets");
+  const targets = (await readdir(targetDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  for (const targetName of targets) {
+    for (const skill of await targetOnlySkillNames(targetName)) {
+      files.push(path.join("targets", targetName, "skills", skill, "SKILL.md"));
+    }
+  }
+  return files.sort();
 }
 
 async function skillNames() {
@@ -582,6 +597,24 @@ async function skillNames() {
     if (existsSync(path.join(ROOT, "skills", entry.name, "SKILL.md"))) names.push(entry.name);
   }
   return names.sort();
+}
+
+async function targetSkillNames(targetName) {
+  return [...new Set([...(await skillNames()), ...(await targetOnlySkillNames(targetName))])].sort();
+}
+
+async function targetOnlySkillNames(targetName) {
+  const skillDir = path.join(ROOT, "targets", targetName, "skills");
+  try {
+    const entries = await readdir(skillDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory() && existsSync(path.join(skillDir, entry.name, "SKILL.md")))
+      .map((entry) => entry.name)
+      .sort();
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 async function listMarkdownFiles(dir) {
