@@ -60,6 +60,35 @@ function requireProfile(map, name, label, file) {
   return map[name];
 }
 
+function isInsideOrSame(child, parent) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function manifestRelativeParts(value, label) {
+  if (!value || typeof value !== "string") throw new Error(`Invalid ${label}: empty path`);
+  if (path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) {
+    throw new Error(`Invalid ${label}: absolute path '${value}'`);
+  }
+  const parts = value.split(/[\\/]+/);
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error(`Invalid ${label}: '${value}' escapes target bundle`);
+  }
+  return parts;
+}
+
+function outputPath(value, label) {
+  const resolved = path.resolve(outDir, ...manifestRelativeParts(value, label));
+  if (!isInsideOrSame(resolved, outDir)) {
+    throw new Error(`Invalid ${label}: '${value}' escapes target bundle`);
+  }
+  return resolved;
+}
+
+function validateManifestPaths() {
+  if (manifest.toolDir) outputPath(manifest.toolDir, "toolDir");
+}
+
 function renderText(text, file) {
   return text.replace(/\{\{target\.([A-Za-z0-9_]+)\}\}/g, (_, key) => {
     const value = manifest.terms?.[key];
@@ -177,9 +206,10 @@ async function renderHooks() {
 async function renderTools() {
   if (!manifest.toolDir) return;
   const sourceTools = path.join(ROOT, "tools");
-  await mkdir(path.join(outDir, manifest.toolDir), { recursive: true });
+  const toolsOut = outputPath(manifest.toolDir, "toolDir");
+  await mkdir(toolsOut, { recursive: true });
   try {
-    await cp(sourceTools, path.join(outDir, manifest.toolDir), { recursive: true });
+    await cp(sourceTools, toolsOut, { recursive: true });
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -201,6 +231,7 @@ async function renderManifest() {
   await writeFile(path.join(outDir, "target-manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 }
 
+validateManifestPaths();
 await rm(outDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
 await renderManifest();

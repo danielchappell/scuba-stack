@@ -15,6 +15,25 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 GUARD="$HERE/targets/claude/hooks/scuba-guard.sh"
+PRIMARY_ROOT="${SCUBA_GUARD_PRIMARY_ROOT:-}"
+if [ -z "$PRIMARY_ROOT" ]; then
+  PRIMARY_ROOT="$(git -C "$HERE" worktree list --porcelain 2>/dev/null | awk '
+    BEGIN { first = "" }
+    /^worktree / {
+      candidate = substr($0, 10)
+      if (first == "") first = candidate
+      if (candidate !~ /\/\.(codex|claude)\/worktrees\//) {
+        print candidate
+        found = 1
+        exit
+      }
+    }
+    END {
+      if (!found && first != "") print first
+    }
+  ')"
+fi
+[ -n "$PRIMARY_ROOT" ] || PRIMARY_ROOT="$HERE"
 
 # Two kinds of fixture paths, kept deliberately separate:
 #
@@ -40,10 +59,12 @@ SCUBA_DIR="$PROJECT/.scuba/teams/x"
 # Real git repo for the lead "tracked code path" case — the one branch where the
 # guard stats the filesystem (`git ls-files`). It MUST live at a NON-temp path
 # (the guard whitelists the system temp dir, so a temp-rooted repo would be
-# allowed before the tracked-code check runs). So we root it beside this script.
-# It's a throwaway repo (its own nested .git), removed on exit. cwd="/" for these
-# cases so no worktree is resolved and the lead branch is exercised.
-TMPROOT="$HERE/_guard_repo.$$"
+# allowed before the tracked-code check runs). So we root it under the primary
+# repository surface, not beside this script when the script is running from a
+# nested worker worktree. It's a throwaway repo (its own nested .git), removed
+# on exit. cwd="/" for these cases so no worktree is resolved and the lead
+# branch is exercised.
+TMPROOT="$PRIMARY_ROOT/_guard_repo.$$"
 rm -rf "$TMPROOT"
 trap 'rm -rf "$TMPROOT"' EXIT
 REPO="$TMPROOT/repo"

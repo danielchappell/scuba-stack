@@ -105,7 +105,12 @@ mkdir -p "$SKILL_DEST" "$AGENT_DEST"
 [ "$HOOKS_ENABLED" -eq 0 ] || mkdir -p "$HOOK_DEST"
 
 BUILD="$(mktemp -d "${TMPDIR:-/tmp}/scuba-render.XXXXXX")"
-trap 'rm -rf "$BUILD"' EXIT
+NEW_MANIFEST=""
+cleanup() {
+  rm -rf "$BUILD"
+  [ -z "$NEW_MANIFEST" ] || rm -f "$NEW_MANIFEST"
+}
+trap cleanup EXIT
 node "$HERE/scripts/render-target.mjs" "$TARGET" "$BUILD"
 
 if [ -n "$RENDER_TOOL_DIR" ] && [ -n "$INSTALL_TOOL_DIR" ]; then
@@ -113,7 +118,7 @@ if [ -n "$RENDER_TOOL_DIR" ] && [ -n "$INSTALL_TOOL_DIR" ]; then
   if [ -f "$MANIFEST" ]; then
     node "$HERE/scripts/install-tools.mjs" validate-manifest "$DEST" "$INSTALL_TOOL_DIR" "$MANIFEST"
   fi
-  node "$HERE/scripts/install-tools.mjs" validate-copy-plan "$BUILD/$RENDER_TOOL_DIR" "$DEST" "$INSTALL_TOOL_DIR"
+  node "$HERE/scripts/install-tools.mjs" validate-copy-plan "$BUILD/$RENDER_TOOL_DIR" "$DEST" "$INSTALL_TOOL_DIR" "$MANIFEST"
 fi
 
 HAVE_JQ=0
@@ -196,20 +201,21 @@ if [ -f "$MANIFEST" ]; then
 fi
 
 # 2) Install current skills and agents from the rendered target bundle.
-: > "$MANIFEST"
+NEW_MANIFEST="$(mktemp "${MANIFEST}.scuba-tmp.XXXXXX")"
+: > "$NEW_MANIFEST"
 for d in "$BUILD/$RENDER_SKILL_DIR"/*/; do
   [ -d "$d" ] || continue
   name="$(basename "$d")"
   rm -rf "$SKILL_DEST/$name"
   cp -R "$d" "$SKILL_DEST/$name"
-  echo "skill:$name" >> "$MANIFEST"
+  echo "skill:$name" >> "$NEW_MANIFEST"
 done
 
 for f in "$BUILD/$RENDER_AGENT_DIR"/*; do
   [ -f "$f" ] || continue
   name="$(basename "$f")"
   cp "$f" "$AGENT_DEST/$name"
-  echo "agent:$name" >> "$MANIFEST"
+  echo "agent:$name" >> "$NEW_MANIFEST"
 done
 
 if [ -n "$RENDER_PROMPT_DIR" ] && [ -n "$PROMPT_DEST" ]; then
@@ -217,12 +223,12 @@ if [ -n "$RENDER_PROMPT_DIR" ] && [ -n "$PROMPT_DEST" ]; then
     [ -f "$f" ] || continue
     name="$(basename "$f")"
     cp "$f" "$PROMPT_DEST/$name"
-    echo "prompt:$name" >> "$MANIFEST"
+    echo "prompt:$name" >> "$NEW_MANIFEST"
   done
 fi
 
 if [ -n "$RENDER_TOOL_DIR" ] && [ -n "$INSTALL_TOOL_DIR" ]; then
-  node "$HERE/scripts/install-tools.mjs" copy "$BUILD/$RENDER_TOOL_DIR" "$DEST" "$INSTALL_TOOL_DIR" >> "$MANIFEST"
+  node "$HERE/scripts/install-tools.mjs" copy "$BUILD/$RENDER_TOOL_DIR" "$DEST" "$INSTALL_TOOL_DIR" >> "$NEW_MANIFEST"
 fi
 
 # 3) Install and wire hooks when the target has a verified adapter.
@@ -236,7 +242,7 @@ if [ "$HOOKS_ENABLED" -eq 1 ]; then
     esac
     cp "$f" "$HOOK_DEST/$name"
     case "$name" in *.sh) chmod +x "$HOOK_DEST/$name" ;; esac
-    echo "hook:$name" >> "$MANIFEST"
+    echo "hook:$name" >> "$NEW_MANIFEST"
   done
 
   if [ -f "$HOOK_DEST/$HOOK_SCRIPT" ]; then
@@ -266,7 +272,7 @@ if [ "$HOOKS_ENABLED" -eq 1 ]; then
               mv "$tmp" "$HOOK_CONFIG"
               HOOK_INSTALLED_MSG="merged"
             fi
-            echo "settings-hook:$HOOK_SCRIPT" >> "$MANIFEST"
+            echo "settings-hook:$HOOK_SCRIPT" >> "$NEW_MANIFEST"
           else
             rm -f "$tmp"
             HOOK_INSTALLED_MSG="merge-failed"
@@ -301,7 +307,7 @@ if [ "$HOOKS_ENABLED" -eq 1 ]; then
               mv "$tmp" "$HOOK_CONFIG"
               HOOK_INSTALLED_MSG="merged"
             fi
-            echo "settings-hook:$HOOK_SCRIPT" >> "$MANIFEST"
+            echo "settings-hook:$HOOK_SCRIPT" >> "$NEW_MANIFEST"
           else
             rm -f "$tmp"
             HOOK_INSTALLED_MSG="merge-failed"
@@ -341,6 +347,9 @@ case "$ROOT_MODE" in
     ROOT_MD="$ROOT_MD" LEGACY_IMPORT_LINES_JSON="$LEGACY_IMPORT_LINES_JSON" SCUBA_ROOT_ACTION=remove node "$HERE/scripts/update-codex-agents.mjs"
     ;;
 esac
+
+mv "$NEW_MANIFEST" "$MANIFEST"
+NEW_MANIFEST=""
 
 s="$(grep -c '^skill:' "$MANIFEST" || true)"
 a="$(grep -c '^agent:' "$MANIFEST" || true)"

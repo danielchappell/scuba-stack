@@ -3,15 +3,16 @@ import { constants } from "node:fs";
 import {
   chmod,
   copyFile,
+  link,
   lstat,
   mkdir,
   open,
   readFile,
   readdir,
   realpath,
-  rename,
   rm,
-  stat
+  stat,
+  unlink
 } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -124,7 +125,7 @@ async function validateParentContained(parentPath, toolReal) {
   if (!parentStats.isDirectory()) {
     fail(`Unsafe tool destination: parent '${current}' is not a directory`);
   }
-  return missing;
+  return { missing, parentReal };
 }
 
 function destinationFor(context, relativePath, label = "tool manifest entry") {
@@ -138,31 +139,42 @@ function destinationFor(context, relativePath, label = "tool manifest entry") {
 
 async function validateExistingManifestDestination(context, relativePath) {
   const { destination } = destinationFor(context, relativePath, "tool manifest entry");
-  await validateParentContained(path.dirname(destination), context.toolReal);
-  if (!(await pathExists(destination))) return;
+  const parent = path.dirname(destination);
+  const { missing, parentReal } = await validateParentContained(parent, context.toolReal);
+  if (missing.length > 0) return { exists: false, parentReal, name: path.basename(destination) };
+  const containedDestination = path.join(parentReal, path.basename(destination));
+  if (!(await pathExists(containedDestination))) return { exists: false, parentReal, name: path.basename(destination) };
 
-  const entry = await lstat(destination);
+  const entry = await lstat(containedDestination);
   if (entry.isSymbolicLink()) {
-    const target = await realpathExisting(destination);
+    const target = await realpathExisting(containedDestination);
     if (!isInsideOrSame(target, context.toolReal)) {
       fail(`Invalid tool manifest entry: '${relativePath}' resolves outside tool directory`);
     }
-    return;
+    return { exists: true, parentReal, name: path.basename(destination) };
   }
   if (!entry.isFile()) {
     fail(`Invalid tool manifest entry: '${relativePath}' is not a regular file`);
   }
+  return { exists: true, parentReal, name: path.basename(destination) };
 }
 
-async function validateCopyDestination(context, relativePath) {
-  const { destination } = destinationFor(context, relativePath, "tool destination");
-  await validateParentContained(path.dirname(destination), context.toolReal);
-  if (!(await pathExists(destination))) return;
+async function validateCopyDestination(context, relativePath, { claimed = new Set() } = {}) {
+  const { destination, normalized } = destinationFor(context, relativePath, "tool destination");
+  const parent = path.dirname(destination);
+  const { missing, parentReal } = await validateParentContained(parent, context.toolReal);
+  if (missing.length > 0) return { exists: false, parentReal, name: path.basename(destination), normalized };
+  const containedDestination = path.join(parentReal, path.basename(destination));
+  if (!(await pathExists(containedDestination))) return { exists: false, parentReal, name: path.basename(destination), normalized };
 
-  const entry = await lstat(destination);
+  const entry = await lstat(containedDestination);
   if (!entry.isFile()) {
     fail(`Unsafe tool destination: '${relativePath}' is not a regular file`);
   }
+  if (!claimed.has(normalized)) {
+    fail(`Unsafe tool destination: '${normalized}' already exists but is not claimed in .scuba-manifest`);
+  }
+  return { exists: true, parentReal, name: path.basename(destination), normalized };
 }
 
 async function toolEntriesFromManifest(manifestFile) {
@@ -203,18 +215,38 @@ async function validateManifest(targetHome, installToolDir, manifestFile) {
   }
 }
 
-async function validateCopyPlan(sourceDir, targetHome, installToolDir) {
+async function claimedToolEntries(manifestFile) {
+  const entries = new Set();
+  for (const entry of await toolEntriesFromManifest(manifestFile)) {
+    entries.add(splitRelativePath(entry, "tool manifest entry").join("/"));
+  }
+  return entries;
+}
+
+async function validateCopyPlan(sourceDir, targetHome, installToolDir, manifestFile) {
   const context = await buildToolContext(targetHome, installToolDir, { create: true });
+  const claimed = manifestFile ? await claimedToolEntries(manifestFile) : new Set();
   for (const file of await listToolFiles(sourceDir)) {
-    await validateCopyDestination(context, file.relative);
+    await validateCopyDestination(context, file.relative, { claimed });
   }
 }
 
 async function removeOne(targetHome, installToolDir, relativePath) {
   const context = await buildToolContext(targetHome, installToolDir, { create: false });
-  await validateExistingManifestDestination(context, relativePath);
-  const { destination } = destinationFor(context, relativePath, "tool manifest entry");
-  await rm(destination, { force: true });
+  const validated = await validateExistingManifestDestination(context, relativePath);
+  if (!validated.exists) return;
+  await withWorkingDirectory(validated.parentReal, async () => {
+    try {
+      const entry = await lstat(validated.name);
+      if (!entry.isFile() && !entry.isSymbolicLink()) {
+        fail(`Invalid tool manifest entry: '${relativePath}' is not a regular file`);
+      }
+      await unlink(validated.name);
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      throw error;
+    }
+  });
 }
 
 async function hasExecutableShebang(sourcePath) {
@@ -239,21 +271,52 @@ async function copyTools(sourceDir, targetHome, installToolDir) {
     const { destination, normalized } = destinationFor(context, file.relative, "tool destination");
     const parent = path.dirname(destination);
     await mkdir(parent, { recursive: true });
-    await validateParentContained(parent, context.toolReal);
+    const { parentReal } = await validateParentContained(parent, context.toolReal);
     await validateCopyDestination(context, file.relative);
 
-    const tempName = `.${path.basename(destination)}.scuba-tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const tempPath = path.join(parent, tempName);
-    try {
-      await copyFile(file.sourcePath, tempPath, constants.COPYFILE_EXCL);
-      await chmod(tempPath, (await hasExecutableShebang(file.sourcePath)) ? 0o755 : 0o644);
-      await rename(tempPath, destination);
-    } catch (error) {
-      await rm(tempPath, { force: true }).catch(() => {});
-      throw error;
-    }
+    await publishToolFile(file.sourcePath, parent, parentReal, path.basename(destination));
     process.stdout.write(`tool:${normalized}\n`);
   }
+}
+
+async function withWorkingDirectory(dir, fn) {
+  const previous = process.cwd();
+  process.chdir(dir);
+  try {
+    return await fn();
+  } finally {
+    process.chdir(previous);
+  }
+}
+
+async function assertParentUnchanged(parent, expectedReal) {
+  const currentReal = await realpathExisting(parent);
+  if (currentReal !== expectedReal) {
+    fail(`Unsafe tool destination: parent '${parent}' changed during install`);
+  }
+}
+
+async function publishToolFile(sourcePath, parent, parentReal, name) {
+  const tempName = `.${name}.scuba-tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await withWorkingDirectory(parentReal, async () => {
+    try {
+      await assertParentUnchanged(parent, parentReal);
+      await copyFile(sourcePath, tempName, constants.COPYFILE_EXCL);
+      await chmod(tempName, (await hasExecutableShebang(sourcePath)) ? 0o755 : 0o644);
+      await assertParentUnchanged(parent, parentReal);
+      await link(tempName, name);
+      try {
+        await assertParentUnchanged(parent, parentReal);
+      } catch (error) {
+        await unlink(name).catch(() => {});
+        throw error;
+      }
+      await unlink(tempName);
+    } catch (error) {
+      await rm(tempName, { force: true }).catch(() => {});
+      throw error;
+    }
+  });
 }
 
 try {
@@ -264,8 +327,8 @@ try {
     if (args.length !== 3) usage();
     await validateManifest(args[0], args[1], args[2]);
   } else if (mode === "validate-copy-plan") {
-    if (args.length !== 3) usage();
-    await validateCopyPlan(args[0], args[1], args[2]);
+    if (args.length !== 3 && args.length !== 4) usage();
+    await validateCopyPlan(args[0], args[1], args[2], args[3]);
   } else if (mode === "remove-one") {
     if (args.length !== 3) usage();
     await removeOne(args[0], args[1], args[2]);
