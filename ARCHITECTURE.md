@@ -29,13 +29,14 @@ Each target manifest maps the neutral concepts to a concrete runtime:
 - The neutral pointer becomes the target's global guidance file only for targets that use always-on guidance.
 - Neutral agents render into the target's agent format.
 - Target-owned skills render after neutral skills when a runtime needs an entrypoint or adapter skill that must not become shared core behavior.
+- Shared executable tools render from source `tools/` into `manifest.toolDir` inside the target bundle, then install under the target home at `install.toolDir`.
 - Target-owned prompts render only for targets that declare them.
 - Hook policy becomes a target adapter only when the target hook contract is represented by target-specific fixtures and install status is truthful.
 
 Current targets:
 
-- Claude: Markdown agents, concrete tool lists, `model: opus`, and a verified `PreToolUse` hook adapter.
-- Codex: TOML custom agents, `gpt-5.5` extra-high-reasoning profile, skills installed under `~/.agents/skills` including the manual `$scuba` entrypoint, no global Scuba root guidance, and a Codex-native `PreToolUse` adapter installed through `~/.codex/hooks.json` pending user trust.
+- Claude: Markdown agents, concrete tool lists, tools under `~/.claude/tools`, `model: opus`, and a verified `PreToolUse` hook adapter.
+- Codex: TOML custom agents, tools under `~/.codex/tools`, `gpt-5.5` extra-high-reasoning profile, skills installed under `~/.agents/skills` including the manual `$scuba` entrypoint, no global Scuba root guidance, and a Codex-native `PreToolUse` adapter installed through `~/.codex/hooks.json` pending user trust.
 
 ## Installer
 
@@ -43,9 +44,11 @@ Current targets:
 
 1. `scripts/render-target.mjs <target> <out-dir>` creates a target bundle.
 2. The installer removes files recorded in the previous target manifest.
-3. It copies rendered skills, agents, optional target prompts, optional pointer, and verified hook adapters.
+3. It copies rendered skills, agents, shared tools, optional target prompts, optional pointer, and verified hook adapters.
 4. It wires or clears target root guidance using the target manifest's root mode: Claude appends one import line if absent, while Codex removes stale Scuba root guidance and stays manual-only.
 5. It surgically merges verified hook entries with temp-then-`mv`: Claude into `settings.json`, Codex into `hooks.json`.
+
+Tool cleanup is manifest-owned and path-contained: prior `.scuba-manifest` entries use `tool:<relative-path>` relative to the installed target tool directory. The installer removes only validated prior `tool:` entries under that directory. Current rendered tools may replace an existing regular file only when the prior manifest claimed that exact relative path; unclaimed files, symlinks, directories, special nodes, and path escapes fail closed before manifest replacement. The renderer also validates `manifest.toolDir` so tools cannot be emitted outside the requested target bundle.
 
 This preserves the original safety property: the installer touches only Scuba-owned files and never overwrites the user's own guidance. Codex subagent fan-out is controlled by Codex's own `agents.max_threads`, `agents.max_depth`, and `agents.job_max_runtime_seconds` settings; Scuba documents those knobs but does not rewrite `config.toml` until a safe TOML merge path exists.
 

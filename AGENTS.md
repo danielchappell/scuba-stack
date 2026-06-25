@@ -28,6 +28,7 @@ The core is target-neutral:
 
 - `skills/*/SKILL.md` are neutral skills. Frontmatter is `name` and `description` only.
 - `agents/*.md` are neutral worker role definitions. Frontmatter is `name`, `description`, `tool_profile`, and `model_profile`.
+- `tools/` contains shared target-neutral executable tools. Targets render it through `manifest.toolDir` and install it through `install.toolDir`.
 - `core/pointer.md` is the neutral always-on pointer rendered only for targets that use global guidance.
 - `core/hooks/*.policy.md` contains target-neutral hook policy.
 - `project-template/TEMPLATE.md` is the neutral per-project guidance template.
@@ -37,6 +38,7 @@ Targets translate the core:
 
 - `targets/claude/manifest.json` maps profiles to Claude tools/models, Markdown agent files, Claude install paths, and the verified Claude hook adapter.
 - `targets/codex/manifest.json` plus `targets/codex/skills/` map profiles to Codex custom-agent TOML, manual skill activation, Codex install paths, and the Codex hook adapter installed through `~/.codex/hooks.json` pending `/hooks` trust.
+- `manifest.toolDir` is the rendered bundle path for shared tools and must stay inside the target bundle. `install.toolDir` is the installed target-home-relative tool path.
 - `scripts/render-target.mjs` is the only renderer. Do not hand-maintain generated target artifacts in user homes.
 
 ## Installer Invariants
@@ -44,6 +46,7 @@ Targets translate the core:
 `install.sh` must remain manifest-driven, surgical, and idempotent.
 
 - It removes only files recorded in the previous target manifest.
+- Tool files recorded in `.scuba-manifest` use `tool:<relative-path>` entries relative to the installed target tool dir. A current rendered tool may replace an existing file only when that exact path was claimed by the prior `tool:` manifest entry; otherwise regular files, symlinks, directories, and special nodes at rendered tool paths are preserved by failing closed.
 - It never overwrites the user's own root guidance file wholesale. Claude appends one import line if absent; Codex is manual-only and removes stale Scuba managed blocks/imports from prior installs. Back up before changing an existing root guidance file, and do not create new backups when the rendered content is unchanged.
 - It installs from a freshly rendered target bundle, not directly from neutral source files.
 - Hook settings are merged via temp-then-`mv`; never write `jq ... settings.json > settings.json` or `jq ... hooks.json > hooks.json`.
@@ -61,7 +64,8 @@ Targets translate the core:
 ## Current Target Notes
 
 - Claude remains the default target and preserves existing install locations under `~/.claude`.
-- Codex installs custom agents to `~/.codex/agents`, skills including the manual `$scuba` entrypoint to `~/.agents/skills`, and the hook adapter to `~/.codex/hooks` with config in `~/.codex/hooks.json`; it does not install global Scuba guidance.
+- Claude installs shared tools to `~/.claude/tools`.
+- Codex installs custom agents to `~/.codex/agents`, skills including the manual `$scuba` entrypoint to `~/.agents/skills`, shared tools to `~/.codex/tools`, and the hook adapter to `~/.codex/hooks` with config in `~/.codex/hooks.json`; it does not install global Scuba guidance.
 
 ## Invariants
 

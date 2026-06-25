@@ -5,11 +5,13 @@ import { existsSync } from "node:fs";
 import {
   appendFile,
   cp,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile
 } from "node:fs/promises";
 import os from "node:os";
@@ -85,7 +87,10 @@ test("neutral frontmatter and target profile mappings are valid", async () => {
     assert.ok(manifest.install?.skillDir, `${manifest.id} is missing install.skillDir`);
     assert.ok(manifest.install?.agentDir, `${manifest.id} is missing install.agentDir`);
     assert.ok(manifest.install?.hookDir, `${manifest.id} is missing install.hookDir`);
+    assert.equal(manifest.toolDir, "tools", `${manifest.id} renders shared tools under tools/`);
+    assert.equal(manifest.install?.toolDir, "tools", `${manifest.id} installs shared tools under target tools/`);
     assert.ok(manifest.terms?.installedSkillDir, `${manifest.id} is missing terms.installedSkillDir`);
+    assert.ok(manifest.terms?.installedToolDir, `${manifest.id} is missing terms.installedToolDir`);
     if (manifest.promptDir) {
       assert.ok(manifest.install?.promptDir, `${manifest.id} promptDir requires install.promptDir`);
     }
@@ -166,6 +171,8 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
     const codexManifest = await readJson(path.join(codexOut, "target-manifest.json"));
     assert.equal(claudeManifest.agentFormat, "claude-md");
     assert.equal(codexManifest.agentFormat, "codex-toml");
+    assert.equal(claudeManifest.toolDir, "tools");
+    assert.equal(codexManifest.toolDir, "tools");
 
     const agents = await agentFiles();
     assert.deepEqual(
@@ -210,6 +217,16 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
     assert.ok(existsSync(path.join(claudeOut, "hooks", "scuba-guard.policy.md")));
     assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.sh")));
     assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.policy.md")));
+    assert.ok(existsSync(path.join(claudeOut, "tools", "pr-feedback-watch.mjs")));
+    assert.ok(existsSync(path.join(codexOut, "tools", "pr-feedback-watch.mjs")));
+    assert.equal(
+      await readFile(path.join(claudeOut, "tools", "pr-feedback-watch.mjs"), "utf8"),
+      await readFile(path.join(ROOT, "tools", "pr-feedback-watch.mjs"), "utf8")
+    );
+    assert.equal(
+      await readFile(path.join(codexOut, "tools", "pr-feedback-watch.mjs"), "utf8"),
+      await readFile(path.join(ROOT, "tools", "pr-feedback-watch.mjs"), "utf8")
+    );
     assert.ok(existsSync(path.join(claudeOut, "project-template", "CLAUDE.md")));
     assert.ok(existsSync(path.join(codexOut, "project-template", "AGENTS.md")));
     assert.ok(!existsSync(path.join(claudeOut, "skills", "scuba", "SKILL.md")));
@@ -368,11 +385,300 @@ test("renderer fails closed on unknown model_profile and tool_profile", async ()
   });
 });
 
+test("renderer rejects toolDir paths that escape the target bundle", async () => {
+  await withTempDir("bad-tool-dir-render", async (tmp) => {
+    const badRoot = path.join(tmp, "bad-tool-dir");
+    const out = path.join(tmp, "out");
+    const escaped = path.join(tmp, "escaped-tools");
+    await copyRepoFixture(badRoot);
+    await mutateJsonFile(path.join(badRoot, "targets", "codex", "manifest.json"), (manifest) => {
+      manifest.toolDir = "../escaped-tools";
+      return manifest;
+    });
+
+    const result = await run("node", ["scripts/render-target.mjs", "codex", out], {
+      cwd: badRoot,
+      allowFailure: true
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Invalid toolDir|escapes target bundle/i);
+    assert.ok(!existsSync(escaped), "renderer wrote tools outside the requested bundle");
+  });
+});
+
 test("installer temp installs are surgical and idempotent for Claude and Codex", async () => {
   await withTempDir("install", async (tmp) => {
     await assertClaudeInstall(path.join(tmp, "claude-home"));
     await assertCodexInstall(path.join(tmp, "codex-home"));
     await assertCodexInstallWithInvalidHookConfig(path.join(tmp, "codex-invalid-home"));
+  });
+});
+
+test("installer refuses unclaimed exact-path tool collisions", async () => {
+  await withTempDir("install-unclaimed-tool-collisions", async (tmp) => {
+    await assertUnclaimedToolCollisionRejected({
+      label: "first install",
+      target: "codex",
+      home: path.join(tmp, "first-install")
+    });
+
+    await assertUnclaimedToolCollisionRejected({
+      label: "legacy manifest without tool claim",
+      target: "codex",
+      home: path.join(tmp, "legacy-manifest"),
+      manifestText: "agent:legacy-agent.toml\n"
+    });
+
+    const manifestLossHome = path.join(tmp, "manifest-loss");
+    await install("codex", manifestLossHome);
+    await rm(path.join(manifestLossHome, ".codex", ".scuba-manifest"));
+    await writeFile(path.join(manifestLossHome, ".codex", "tools", "pr-feedback-watch.mjs"), "user replacement\n");
+    const manifestLoss = await installAllowFailure("codex", manifestLossHome);
+    assert.notEqual(manifestLoss.status, 0, "manifest-loss install overwrote an unclaimed tool file");
+    assert.match(manifestLoss.stderr, /unclaimed|Unsafe tool destination|already exists/i);
+    assert.equal(
+      await readFile(path.join(manifestLossHome, ".codex", "tools", "pr-feedback-watch.mjs"), "utf8"),
+      "user replacement\n"
+    );
+  });
+});
+
+test("installer rejects invalid prior tool manifest entries before mutating", async () => {
+  await withTempDir("install-invalid-tools", async (tmp) => {
+    for (const [target, targetHome] of [
+      ["claude", ".claude"],
+      ["codex", ".codex"]
+    ]) {
+      for (const invalidEntry of ["tool:\n", "tool:/tmp/scuba-tool-escape.mjs\n", "tool:../escape.mjs\n"]) {
+        const home = path.join(tmp, `${target}-${invalidEntry.replace(/[^a-z0-9]/gi, "-")}`);
+        await install(target, home);
+        const targetRoot = path.join(home, targetHome);
+        const validStale = path.join(targetRoot, "tools", "stale-valid.mjs");
+        await mkdir(path.dirname(validStale), { recursive: true });
+        await writeFile(validStale, "stale\n");
+        await appendFile(
+          path.join(targetRoot, ".scuba-manifest"),
+          `tool:stale-valid.mjs\n${invalidEntry}`
+        );
+        const manifestBefore = await readFile(path.join(targetRoot, ".scuba-manifest"), "utf8");
+
+        const result = await installAllowFailure(target, home);
+
+        assert.notEqual(result.status, 0, `${target} accepted invalid manifest entry ${JSON.stringify(invalidEntry)}`);
+        assert.match(result.stderr, /Invalid tool manifest entry|invalid tool manifest entry/i);
+        assert.ok(existsSync(validStale), `${target} removed valid stale tool before rejecting invalid entry`);
+        assert.equal(await readFile(path.join(targetRoot, ".scuba-manifest"), "utf8"), manifestBefore);
+      }
+    }
+  });
+});
+
+test("installer contains nested tool parent symlink races", async () => {
+  await withTempDir("install-tool-parent-races", async (tmp) => {
+    const raceRoot = path.join(tmp, "race-root");
+    await copyRepoFixture(raceRoot);
+    await mkdir(path.join(raceRoot, "tools", "nested"), { recursive: true });
+    await writeFile(path.join(raceRoot, "tools", "nested", "child.mjs"), "#!/usr/bin/env node\n");
+
+    const copyHome = path.join(tmp, "copy-race-home");
+    const copyTargetRoot = path.join(copyHome, ".codex");
+    const copyParent = path.join(copyTargetRoot, "tools", "nested");
+    const copyOutside = path.join(tmp, "copy-outside");
+    await mkdir(copyParent, { recursive: true });
+    await mkdir(copyOutside, { recursive: true });
+    const copyHook = await writeNodeRequireHook(
+      tmp,
+      "swap-copy-parent.cjs",
+      `
+const fsp = require("node:fs/promises");
+const { syncBuiltinESMExports } = require("node:module");
+const originalCopyFile = fsp.copyFile;
+let swapped = false;
+fsp.copyFile = async function patchedCopyFile(source, destination, ...rest) {
+  if (!swapped && String(source).endsWith("/nested/child.mjs")) {
+    swapped = true;
+    const parent = process.env.SCUBA_SWAP_PARENT;
+    const outside = process.env.SCUBA_SWAP_OUTSIDE;
+    await fsp.rm(parent + ".moved", { recursive: true, force: true });
+    await fsp.rename(parent, parent + ".moved");
+    await fsp.symlink(outside, parent);
+  }
+  return originalCopyFile.call(this, source, destination, ...rest);
+};
+syncBuiltinESMExports();
+`
+    );
+
+    const copyRace = await installAllowFailure("codex", copyHome, {
+      cwd: raceRoot,
+      env: {
+        NODE_OPTIONS: `--require=${copyHook}`,
+        SCUBA_SWAP_PARENT: copyParent,
+        SCUBA_SWAP_OUTSIDE: copyOutside
+      }
+    });
+    assert.notEqual(copyRace.status, 0, "copy race succeeded after the destination parent was swapped");
+    assert.ok(!existsSync(path.join(copyOutside, "child.mjs")), "copy race wrote through the swapped parent symlink");
+    assert.ok(!existsSync(path.join(copyTargetRoot, ".scuba-manifest")), "copy race rewrote the manifest on failure");
+
+    const removeHome = path.join(tmp, "remove-race-home");
+    const removeTargetRoot = path.join(removeHome, ".codex");
+    const removeParent = path.join(removeTargetRoot, "tools", "nested");
+    const removeOutside = path.join(tmp, "remove-outside");
+    await mkdir(removeParent, { recursive: true });
+    await mkdir(removeOutside, { recursive: true });
+    await writeFile(path.join(removeParent, "stale.mjs"), "owned\n");
+    await writeFile(path.join(removeOutside, "stale.mjs"), "outside\n");
+    const removeHook = await writeNodeRequireHook(
+      tmp,
+      "swap-remove-parent.cjs",
+      `
+const fsp = require("node:fs/promises");
+const { syncBuiltinESMExports } = require("node:module");
+const originalRm = fsp.rm;
+let swapped = false;
+fsp.rm = async function patchedRm(target, ...rest) {
+  if (!swapped && String(target).endsWith("/nested/stale.mjs")) {
+    swapped = true;
+    const parent = process.env.SCUBA_SWAP_PARENT;
+    const outside = process.env.SCUBA_SWAP_OUTSIDE;
+    await fsp.rm(parent + ".moved", { recursive: true, force: true });
+    await fsp.rename(parent, parent + ".moved");
+    await fsp.symlink(outside, parent);
+  }
+  return originalRm.call(this, target, ...rest);
+};
+syncBuiltinESMExports();
+`
+    );
+
+    await run("node", ["scripts/install-tools.mjs", "remove-one", removeTargetRoot, "tools", "nested/stale.mjs"], {
+      env: {
+        NODE_OPTIONS: `--require=${removeHook}`,
+        SCUBA_SWAP_PARENT: removeParent,
+        SCUBA_SWAP_OUTSIDE: removeOutside
+      }
+    });
+    assert.equal(await readFile(path.join(removeOutside, "stale.mjs"), "utf8"), "outside\n");
+  });
+});
+
+test("installer preserves the prior manifest when tool copy fails", async () => {
+  await withTempDir("install-copy-failure-manifest", async (tmp) => {
+    const home = path.join(tmp, "home");
+    await install("codex", home);
+    const manifestFile = path.join(home, ".codex", ".scuba-manifest");
+    await writeFile(path.join(home, ".codex", "tools", "stale-before-failure.mjs"), "stale\n");
+    await appendFile(manifestFile, "tool:stale-before-failure.mjs\n");
+    const manifestBefore = await readFile(manifestFile, "utf8");
+    const copyFailHook = await writeNodeRequireHook(
+      tmp,
+      "fail-tool-copy.cjs",
+      `
+const fsp = require("node:fs/promises");
+const { syncBuiltinESMExports } = require("node:module");
+const originalCopyFile = fsp.copyFile;
+fsp.copyFile = async function patchedCopyFile(source, destination, ...rest) {
+  if (String(source).endsWith("/pr-feedback-watch.mjs")) {
+    const collision = process.env.SCUBA_COPY_COLLISION_PATH;
+    await fsp.rm(collision, { recursive: true, force: true });
+    await fsp.mkdir(collision, { recursive: true });
+    throw new Error("injected tool copy failure");
+  }
+  return originalCopyFile.call(this, source, destination, ...rest);
+};
+syncBuiltinESMExports();
+`
+    );
+
+    const result = await installAllowFailure("codex", home, {
+      env: {
+        NODE_OPTIONS: `--require=${copyFailHook}`,
+        SCUBA_COPY_COLLISION_PATH: path.join(home, ".codex", "tools", "pr-feedback-watch.mjs")
+      }
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /injected tool copy failure/);
+    assert.equal(await readFile(manifestFile, "utf8"), manifestBefore);
+  });
+});
+
+test("installer rejects unsafe current tool destinations before copying", async () => {
+  await withTempDir("install-tool-containment", async (tmp) => {
+    await assertUnsafeToolDestinationRejected({
+      label: "codex-tool-dir-symlink",
+      target: "codex",
+      home: path.join(tmp, "codex-symlinked-tool-dir"),
+      setup: async (home) => {
+        const outside = path.join(tmp, "outside-tool-dir");
+        await mkdir(path.join(home, ".codex"), { recursive: true });
+        await mkdir(outside, { recursive: true });
+        await symlink(outside, path.join(home, ".codex", "tools"));
+        return {
+          forbiddenPath: path.join(outside, "pr-feedback-watch.mjs")
+        };
+      }
+    });
+
+    await assertUnsafeToolDestinationRejected({
+      label: "codex-final-tool-symlink",
+      target: "codex",
+      home: path.join(tmp, "codex-final-symlink"),
+      setup: async (home) => {
+        const outside = path.join(tmp, "outside-final.mjs");
+        await mkdir(path.join(home, ".codex", "tools"), { recursive: true });
+        await writeFile(outside, "outside\n");
+        await symlink(outside, path.join(home, ".codex", "tools", "pr-feedback-watch.mjs"));
+        return {
+          forbiddenPath: outside,
+          forbiddenContent: "outside\n"
+        };
+      }
+    });
+
+    await assertUnsafeToolDestinationRejected({
+      label: "codex-final-tool-directory",
+      target: "codex",
+      home: path.join(tmp, "codex-final-directory"),
+      setup: async (home) => {
+        await mkdir(path.join(home, ".codex", "tools", "pr-feedback-watch.mjs"), { recursive: true });
+        return {
+          forbiddenPath: path.join(home, ".codex", "tools", "pr-feedback-watch.mjs")
+        };
+      }
+    });
+
+    await assertUnsafeToolDestinationRejected({
+      label: "codex-final-tool-fifo",
+      target: "codex",
+      home: path.join(tmp, "codex-final-fifo"),
+      setup: async (home) => {
+        const fifo = path.join(home, ".codex", "tools", "pr-feedback-watch.mjs");
+        await mkdir(path.dirname(fifo), { recursive: true });
+        await run("mkfifo", [fifo]);
+        return {
+          forbiddenPath: fifo
+        };
+      }
+    });
+
+    const badRoot = path.join(tmp, "bad-install-tool-dir");
+    const badHome = path.join(tmp, "bad-install-tool-dir-home");
+    await copyRepoFixture(badRoot);
+    await mutateJsonFile(path.join(badRoot, "targets", "codex", "manifest.json"), (manifest) => {
+      manifest.install.toolDir = "../outside-tools";
+      return manifest;
+    });
+    const badInstallDirResult = await run("bash", ["install.sh", "codex"], {
+      cwd: badRoot,
+      env: { HOME: badHome },
+      allowFailure: true
+    });
+    assert.notEqual(badInstallDirResult.status, 0);
+    assert.match(badInstallDirResult.stderr, /Invalid tool install directory|invalid tool install directory/i);
+    assert.ok(!existsSync(path.join(badHome, ".codex", ".scuba-manifest")));
   });
 });
 
@@ -403,14 +709,19 @@ async function assertClaudeInstall(home) {
   assert.deepEqual(await dirNames(path.join(home, ".claude", "skills")), sourceSkills);
   assert.deepEqual(await fileNames(path.join(home, ".claude", "agents")), sourceAgents);
   assert.ok(existsSync(path.join(home, ".claude", "hooks", "scuba-guard.sh")));
+  assert.ok(existsSync(path.join(home, ".claude", "tools", "pr-feedback-watch.mjs")));
+  await assertExecutable(path.join(home, ".claude", "tools", "pr-feedback-watch.mjs"));
   assert.ok(!existsSync(path.join(home, ".claude", "agents", "stale-agent.md")));
   assert.ok(!existsSync(path.join(home, ".claude", "skills", "stale-skill")));
   assert.ok(!existsSync(path.join(home, ".claude", "hooks", "stale-hook.sh")));
+  assert.ok(!existsSync(path.join(home, ".claude", "tools", "stale-tool.mjs")));
+  assert.equal(await readFile(path.join(home, ".claude", "tools", "user-tool.mjs"), "utf8"), "user\n");
 
   const manifest = await readManifest(path.join(home, ".claude", ".scuba-manifest"));
   assert.equal(manifest.skill, sourceSkills.length);
   assert.equal(manifest.agent, sourceAgents.length);
   assert.equal(manifest.hook, 1);
+  assert.equal(manifest.tool, 1);
 }
 
 async function assertCodexInstall(home) {
@@ -450,10 +761,14 @@ async function assertCodexInstall(home) {
   assert.deepEqual(await fileNames(path.join(home, ".codex", "prompts")), []);
   assert.ok(existsSync(path.join(home, ".agents", "skills", "scuba", "SKILL.md")));
   assert.ok(existsSync(path.join(home, ".codex", "hooks", "scuba-guard.sh")));
+  assert.ok(existsSync(path.join(home, ".codex", "tools", "pr-feedback-watch.mjs")));
+  await assertExecutable(path.join(home, ".codex", "tools", "pr-feedback-watch.mjs"));
   assert.ok(!existsSync(path.join(home, ".codex", "agents", "stale-agent.toml")));
   assert.ok(!existsSync(path.join(home, ".agents", "skills", "stale-skill")));
   assert.ok(!existsSync(path.join(home, ".codex", "prompts", "stale-prompt.md")));
   assert.ok(!existsSync(path.join(home, ".codex", "hooks", "stale-hook.sh")));
+  assert.ok(!existsSync(path.join(home, ".codex", "tools", "stale-tool.mjs")));
+  assert.equal(await readFile(path.join(home, ".codex", "tools", "user-tool.mjs"), "utf8"), "user\n");
   assert.equal(await countMatching(path.join(home, ".codex"), /^hooks\.json\.scuba-bak\./), 1);
 
   const scubaSkill = await readFile(path.join(home, ".agents", "skills", "scuba", "SKILL.md"), "utf8");
@@ -480,6 +795,7 @@ async function assertCodexInstall(home) {
   assert.equal(manifest.skill, sourceSkills.length);
   assert.equal(manifest.agent, sourceAgents.length);
   assert.equal(manifest.hook, 1);
+  assert.equal(manifest.tool, 1);
   assert.equal(manifest.prompt ?? 0, 0);
   assert.equal(manifest["settings-hook"], 1);
 }
@@ -501,9 +817,12 @@ async function addStaleManifestEntries(home, target) {
     await mkdir(path.join(home, ".claude", "skills", "stale-skill"), { recursive: true });
     await writeFile(path.join(home, ".claude", "skills", "stale-skill", "SKILL.md"), "stale\n");
     await writeFile(path.join(home, ".claude", "hooks", "stale-hook.sh"), "stale\n");
+    await mkdir(path.join(home, ".claude", "tools"), { recursive: true });
+    await writeFile(path.join(home, ".claude", "tools", "stale-tool.mjs"), "stale\n");
+    await writeFile(path.join(home, ".claude", "tools", "user-tool.mjs"), "user\n");
     await appendFile(
       path.join(home, ".claude", ".scuba-manifest"),
-      "agent:stale-agent.md\nskill:stale-skill\nhook:stale-hook.sh\n"
+      "agent:stale-agent.md\nskill:stale-skill\nhook:stale-hook.sh\ntool:stale-tool.mjs\n"
     );
     return;
   }
@@ -515,9 +834,12 @@ async function addStaleManifestEntries(home, target) {
   await writeFile(path.join(home, ".codex", "prompts", "stale-prompt.md"), "stale\n");
   await mkdir(path.join(home, ".codex", "hooks"), { recursive: true });
   await writeFile(path.join(home, ".codex", "hooks", "stale-hook.sh"), "stale\n");
+  await mkdir(path.join(home, ".codex", "tools"), { recursive: true });
+  await writeFile(path.join(home, ".codex", "tools", "stale-tool.mjs"), "stale\n");
+  await writeFile(path.join(home, ".codex", "tools", "user-tool.mjs"), "user\n");
   await appendFile(
     path.join(home, ".codex", ".scuba-manifest"),
-    "agent:stale-agent.toml\nskill:stale-skill\nprompt:stale-prompt.md\nhook:stale-hook.sh\n"
+    "agent:stale-agent.toml\nskill:stale-skill\nprompt:stale-prompt.md\nhook:stale-hook.sh\ntool:stale-tool.mjs\n"
   );
 }
 
@@ -525,6 +847,69 @@ async function install(target, home) {
   await run("bash", ["install.sh", target], {
     env: { HOME: home }
   });
+}
+
+async function installAllowFailure(target, home, options = {}) {
+  return run("bash", ["install.sh", target], {
+    cwd: options.cwd ?? ROOT,
+    env: { HOME: home, ...(options.env ?? {}) },
+    allowFailure: true
+  });
+}
+
+async function assertUnclaimedToolCollisionRejected({ label, target, home, manifestText }) {
+  const targetRoot = path.join(home, target === "claude" ? ".claude" : ".codex");
+  const toolFile = path.join(targetRoot, "tools", "pr-feedback-watch.mjs");
+  await mkdir(path.dirname(toolFile), { recursive: true });
+  await writeFile(toolFile, `${label} user file\n`);
+  if (manifestText !== undefined) {
+    await writeFile(path.join(targetRoot, ".scuba-manifest"), manifestText);
+  }
+  const manifestBefore = manifestText === undefined ? undefined : await readFile(path.join(targetRoot, ".scuba-manifest"), "utf8");
+
+  const result = await installAllowFailure(target, home);
+
+  assert.notEqual(result.status, 0, `${label} collision was accepted`);
+  assert.match(result.stderr, /unclaimed|Unsafe tool destination|already exists/i);
+  assert.equal(await readFile(toolFile, "utf8"), `${label} user file\n`);
+  if (manifestBefore === undefined) {
+    assert.ok(!existsSync(path.join(targetRoot, ".scuba-manifest")), `${label} wrote a manifest after rejecting collision`);
+  } else {
+    assert.equal(await readFile(path.join(targetRoot, ".scuba-manifest"), "utf8"), manifestBefore);
+  }
+}
+
+async function assertUnsafeToolDestinationRejected({ label, target, home, setup }) {
+  const guard = await setup(home);
+  const existedBefore = guard.forbiddenPath ? existsSync(guard.forbiddenPath) : false;
+  const before = guard.forbiddenPath && existsSync(guard.forbiddenPath)
+    ? await readMaybeFile(guard.forbiddenPath)
+    : undefined;
+  const result = await installAllowFailure(target, home);
+
+  assert.notEqual(result.status, 0, `${label} was accepted`);
+  assert.match(result.stderr, /Unsafe tool destination|invalid tool install directory|refusing/i);
+  if (guard.forbiddenContent !== undefined) {
+    assert.equal(await readFile(guard.forbiddenPath, "utf8"), guard.forbiddenContent);
+  } else if (existedBefore) {
+    assert.ok(existsSync(guard.forbiddenPath), `${label} removed the existing collision node`);
+    assert.equal(await readMaybeFile(guard.forbiddenPath), before);
+  } else if (before === undefined) {
+    assert.ok(!existsSync(guard.forbiddenPath), `${label} wrote ${guard.forbiddenPath}`);
+  }
+  assert.ok(!existsSync(path.join(home, target === "claude" ? ".claude" : ".codex", ".scuba-manifest")));
+}
+
+async function assertExecutable(file) {
+  const stats = await lstat(file);
+  assert.ok(stats.isFile(), `${file} is not a regular file`);
+  assert.ok((stats.mode & 0o111) !== 0, `${file} is not executable`);
+}
+
+async function readMaybeFile(file) {
+  const stats = await lstat(file);
+  if (!stats.isFile()) return undefined;
+  return readFile(file, "utf8");
 }
 
 async function readManifest(file) {
@@ -708,6 +1093,18 @@ async function replaceInFile(file, from, to) {
   const text = await readFile(file, "utf8");
   assert.ok(text.includes(from), `${file} did not contain ${from}`);
   await writeFile(file, text.replace(from, to));
+}
+
+async function mutateJsonFile(file, mutate) {
+  const data = JSON.parse(await readFile(file, "utf8"));
+  const next = mutate(data) ?? data;
+  await writeFile(file, JSON.stringify(next, null, 2) + "\n");
+}
+
+async function writeNodeRequireHook(dir, name, body) {
+  const file = path.join(dir, name);
+  await writeFile(file, body.trimStart());
+  return file;
 }
 
 async function copyRepoFixture(dest) {

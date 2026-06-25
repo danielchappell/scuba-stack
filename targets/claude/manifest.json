@@ -9,10 +9,12 @@
   "agentFormat": "claude-md",
   "skillDir": "skills",
   "agentDir": "agents",
+  "toolDir": "tools",
   "hookDir": "hooks",
   "install": {
     "skillDir": "skills",
     "agentDir": "agents",
+    "toolDir": "tools",
     "hookDir": "hooks"
   },
   "settingsFile": "settings.json",
@@ -22,6 +24,7 @@
     "rootGuidancePath": "~/.claude/CLAUDE.md",
     "userScopeHome": "~/.claude",
     "installedSkillDir": "~/.claude/skills",
+    "installedToolDir": "~/.claude/tools",
     "fileEditTools": "`Write`/`Edit` tools",
     "highJudgmentModel": "Opus",
     "externalReviewerExample": "Codex",

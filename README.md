@@ -6,7 +6,7 @@ Scuba Stack turns one user-facing agent into a small, disciplined organization: 
 
 ## Status
 
-Experimental. The Claude target preserves existing install behavior while adding the new lifecycle gates. The Codex target installs skills, custom agents, an explicit `$scuba` manual entrypoint skill, and a Codex-native hook adapter. Codex hook status after install is **installed, pending trust** until the user reviews/trusts it with `/hooks`; treat it as operational only after trust and a live smoke.
+Experimental. The Claude target preserves existing install behavior while adding the new lifecycle gates. Both targets install shared Scuba tools under their target homes. The Codex target installs skills, custom agents, an explicit `$scuba` manual entrypoint skill, and a Codex-native hook adapter. Codex hook status after install is **installed, pending trust** until the user reviews/trusts it with `/hooks`; treat it as operational only after trust and a live smoke.
 
 ## Quickstart
 
@@ -32,6 +32,7 @@ The target-neutral source lives in:
 - `agents/*.md` — neutral worker roles with `tool_profile` and `model_profile`.
 - `core/hooks/*.policy.md` — hook policies, not runtime-specific hook code.
 - `project-template/TEMPLATE.md` — neutral per-project guidance template.
+- `tools/` — target-neutral executable helpers rendered into target tool directories.
 
 Target-specific translation lives in:
 
@@ -41,10 +42,10 @@ Target-specific translation lives in:
 
 ## Targets
 
-| Target | Guidance | Skills | Agents | Prompts | Hooks |
-|---|---|---|---|---|---|
-| Claude | `~/.claude/CLAUDE.md` imports `~/.claude/scuba.md` | `~/.claude/skills` | Markdown agents in `~/.claude/agents` | none | Verified `PreToolUse` adapter installed |
-| Codex | none; invoke Scuba manually with `$scuba` | `~/.agents/skills` | TOML custom agents in `~/.codex/agents` | none | `~/.codex/hooks.json` entry installed pending `/hooks` trust |
+| Target | Guidance | Skills | Agents | Tools | Prompts | Hooks |
+|---|---|---|---|---|---|---|
+| Claude | `~/.claude/CLAUDE.md` imports `~/.claude/scuba.md` | `~/.claude/skills` | Markdown agents in `~/.claude/agents` | `~/.claude/tools` | none | Verified `PreToolUse` adapter installed |
+| Codex | none; invoke Scuba manually with `$scuba` | `~/.agents/skills` | TOML custom agents in `~/.codex/agents` | `~/.codex/tools` | none | `~/.codex/hooks.json` entry installed pending `/hooks` trust |
 
 Concrete model and tool choices are target manifest data. The neutral role files name profiles such as `high_judgment` and `code_writer`; renderers map those profiles to each platform.
 
