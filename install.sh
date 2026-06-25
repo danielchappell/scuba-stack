@@ -65,10 +65,12 @@ ROOT_MODE="$(manifest_get rootMode)"
 RENDER_SKILL_DIR="$(manifest_get skillDir)"
 RENDER_AGENT_DIR="$(manifest_get agentDir)"
 RENDER_PROMPT_DIR="$(manifest_get_optional promptDir)"
+RENDER_TOOL_DIR="$(manifest_get_optional toolDir)"
 RENDER_HOOK_DIR="$(manifest_get hookDir)"
 INSTALL_SKILL_DIR="$(manifest_get install.skillDir)"
 INSTALL_AGENT_DIR="$(manifest_get install.agentDir)"
 INSTALL_PROMPT_DIR="$(manifest_get_optional install.promptDir)"
+INSTALL_TOOL_DIR="$(manifest_get_optional install.toolDir)"
 INSTALL_HOOK_DIR="$(manifest_get install.hookDir)"
 SETTINGS_FILE="$(manifest_get_optional settingsFile)"
 
@@ -80,6 +82,8 @@ SKILL_DEST="$DEST/$INSTALL_SKILL_DIR"
 AGENT_DEST="$DEST/$INSTALL_AGENT_DIR"
 PROMPT_DEST=""
 [ -z "$INSTALL_PROMPT_DIR" ] || PROMPT_DEST="$DEST/$INSTALL_PROMPT_DIR"
+TOOL_DEST=""
+[ -z "$INSTALL_TOOL_DIR" ] || TOOL_DEST="$DEST/$INSTALL_TOOL_DIR"
 HOOK_DEST="$DEST/$INSTALL_HOOK_DIR"
 
 HOOK_INSTALL="$(manifest_get_optional hooks.scuba-guard.install)"
@@ -103,6 +107,14 @@ mkdir -p "$SKILL_DEST" "$AGENT_DEST"
 BUILD="$(mktemp -d "${TMPDIR:-/tmp}/scuba-render.XXXXXX")"
 trap 'rm -rf "$BUILD"' EXIT
 node "$HERE/scripts/render-target.mjs" "$TARGET" "$BUILD"
+
+if [ -n "$RENDER_TOOL_DIR" ] && [ -n "$INSTALL_TOOL_DIR" ]; then
+  node "$HERE/scripts/install-tools.mjs" validate-install-dir "$DEST" "$INSTALL_TOOL_DIR"
+  if [ -f "$MANIFEST" ]; then
+    node "$HERE/scripts/install-tools.mjs" validate-manifest "$DEST" "$INSTALL_TOOL_DIR" "$MANIFEST"
+  fi
+  node "$HERE/scripts/install-tools.mjs" validate-copy-plan "$BUILD/$RENDER_TOOL_DIR" "$DEST" "$INSTALL_TOOL_DIR"
+fi
 
 HAVE_JQ=0
 if command -v jq >/dev/null 2>&1; then HAVE_JQ=1; fi
@@ -168,6 +180,11 @@ if [ -f "$MANIFEST" ]; then
         fi
         ;;
       hook:*)          rm -f  "$HOOK_DEST/${entry#hook:}" ;;
+      tool:*)
+        if [ -n "$INSTALL_TOOL_DIR" ]; then
+          node "$HERE/scripts/install-tools.mjs" remove-one "$DEST" "$INSTALL_TOOL_DIR" "${entry#tool:}"
+        fi
+        ;;
       settings-hook:*)
         prev_hook_script="${entry#settings-hook:}"
         if [ "$HOOKS_ENABLED" -eq 0 ] || [ "$prev_hook_script" != "$HOOK_SCRIPT" ]; then
@@ -202,6 +219,10 @@ if [ -n "$RENDER_PROMPT_DIR" ] && [ -n "$PROMPT_DEST" ]; then
     cp "$f" "$PROMPT_DEST/$name"
     echo "prompt:$name" >> "$MANIFEST"
   done
+fi
+
+if [ -n "$RENDER_TOOL_DIR" ] && [ -n "$INSTALL_TOOL_DIR" ]; then
+  node "$HERE/scripts/install-tools.mjs" copy "$BUILD/$RENDER_TOOL_DIR" "$DEST" "$INSTALL_TOOL_DIR" >> "$MANIFEST"
 fi
 
 # 3) Install and wire hooks when the target has a verified adapter.
@@ -325,7 +346,8 @@ s="$(grep -c '^skill:' "$MANIFEST" || true)"
 a="$(grep -c '^agent:' "$MANIFEST" || true)"
 p="$(grep -c '^prompt:' "$MANIFEST" || true)"
 h="$(grep -c '^hook:' "$MANIFEST" || true)"
-echo "Scuba Stack installed/updated for $TARGET_NAME: $s skills, $a agents, $p prompt(s), $h hook file(s). Safe to re-run anytime."
+t="$(grep -c '^tool:' "$MANIFEST" || true)"
+echo "Scuba Stack installed/updated for $TARGET_NAME: $s skills, $a agents, $p prompt(s), $h hook file(s), $t tool file(s). Safe to re-run anytime."
 echo
 
 case "$TARGET" in

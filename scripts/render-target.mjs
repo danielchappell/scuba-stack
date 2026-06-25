@@ -174,6 +174,17 @@ async function renderHooks() {
   }
 }
 
+async function renderTools() {
+  if (!manifest.toolDir) return;
+  const sourceTools = path.join(ROOT, "tools");
+  await mkdir(path.join(outDir, manifest.toolDir), { recursive: true });
+  try {
+    await cp(sourceTools, path.join(outDir, manifest.toolDir), { recursive: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
 async function renderPrompts() {
   if (!manifest.promptDir) return;
   await copyRenderedMarkdownTree(path.join(ROOT, "targets", target, "prompts"), path.join(outDir, manifest.promptDir));
@@ -196,6 +207,7 @@ await renderManifest();
 await renderPointer();
 await renderSkills();
 await renderAgents();
+await renderTools();
 await renderPrompts();
 await renderHooks();
 await renderProjectTemplate();
