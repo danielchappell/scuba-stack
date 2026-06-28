@@ -218,14 +218,24 @@ test("renderer emits the expected Claude and Codex target shapes", async () => {
     assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.sh")));
     assert.ok(existsSync(path.join(codexOut, "hooks", "scuba-guard.policy.md")));
     assert.ok(existsSync(path.join(claudeOut, "tools", "pr-feedback-watch.mjs")));
+    assert.ok(existsSync(path.join(claudeOut, "tools", "lib", "pr-feedback-state.mjs")));
     assert.ok(existsSync(path.join(codexOut, "tools", "pr-feedback-watch.mjs")));
+    assert.ok(existsSync(path.join(codexOut, "tools", "lib", "pr-feedback-state.mjs")));
     assert.equal(
       await readFile(path.join(claudeOut, "tools", "pr-feedback-watch.mjs"), "utf8"),
       await readFile(path.join(ROOT, "tools", "pr-feedback-watch.mjs"), "utf8")
     );
     assert.equal(
+      await readFile(path.join(claudeOut, "tools", "lib", "pr-feedback-state.mjs"), "utf8"),
+      await readFile(path.join(ROOT, "tools", "lib", "pr-feedback-state.mjs"), "utf8")
+    );
+    assert.equal(
       await readFile(path.join(codexOut, "tools", "pr-feedback-watch.mjs"), "utf8"),
       await readFile(path.join(ROOT, "tools", "pr-feedback-watch.mjs"), "utf8")
+    );
+    assert.equal(
+      await readFile(path.join(codexOut, "tools", "lib", "pr-feedback-state.mjs"), "utf8"),
+      await readFile(path.join(ROOT, "tools", "lib", "pr-feedback-state.mjs"), "utf8")
     );
     assert.ok(existsSync(path.join(claudeOut, "project-template", "CLAUDE.md")));
     assert.ok(existsSync(path.join(codexOut, "project-template", "AGENTS.md")));
@@ -877,6 +887,10 @@ test("Codex JSONL audit acceptance gates operational proof", async () => {
   });
 });
 
+test("PR feedback watcher local state substrate is replayable and lock-safe", async () => {
+  await run("node", ["scripts/test-pr-feedback-watch.mjs"]);
+});
+
 function test(name, fn) {
   tests.push({ name, fn });
 }
@@ -899,6 +913,7 @@ async function assertClaudeInstall(home) {
   assert.deepEqual(await fileNames(path.join(home, ".claude", "agents")), sourceAgents);
   assert.ok(existsSync(path.join(home, ".claude", "hooks", "scuba-guard.sh")));
   assert.ok(existsSync(path.join(home, ".claude", "tools", "pr-feedback-watch.mjs")));
+  assert.ok(existsSync(path.join(home, ".claude", "tools", "lib", "pr-feedback-state.mjs")));
   await assertExecutable(path.join(home, ".claude", "tools", "pr-feedback-watch.mjs"));
   assert.ok(!existsSync(path.join(home, ".claude", "agents", "stale-agent.md")));
   assert.ok(!existsSync(path.join(home, ".claude", "skills", "stale-skill")));
@@ -910,7 +925,7 @@ async function assertClaudeInstall(home) {
   assert.equal(manifest.skill, sourceSkills.length);
   assert.equal(manifest.agent, sourceAgents.length);
   assert.equal(manifest.hook, 1);
-  assert.equal(manifest.tool, 1);
+  assert.equal(manifest.tool, 2);
 }
 
 async function assertCodexInstall(home) {
@@ -951,6 +966,7 @@ async function assertCodexInstall(home) {
   assert.ok(existsSync(path.join(home, ".agents", "skills", "scuba", "SKILL.md")));
   assert.ok(existsSync(path.join(home, ".codex", "hooks", "scuba-guard.sh")));
   assert.ok(existsSync(path.join(home, ".codex", "tools", "pr-feedback-watch.mjs")));
+  assert.ok(existsSync(path.join(home, ".codex", "tools", "lib", "pr-feedback-state.mjs")));
   await assertExecutable(path.join(home, ".codex", "tools", "pr-feedback-watch.mjs"));
   assert.ok(!existsSync(path.join(home, ".codex", "agents", "stale-agent.toml")));
   assert.ok(!existsSync(path.join(home, ".agents", "skills", "stale-skill")));
@@ -984,7 +1000,7 @@ async function assertCodexInstall(home) {
   assert.equal(manifest.skill, sourceSkills.length);
   assert.equal(manifest.agent, sourceAgents.length);
   assert.equal(manifest.hook, 1);
-  assert.equal(manifest.tool, 1);
+  assert.equal(manifest.tool, 2);
   assert.equal(manifest.prompt ?? 0, 0);
   assert.equal(manifest["settings-hook"], 1);
 }
