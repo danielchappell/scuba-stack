@@ -170,6 +170,71 @@ test("one PR lock serializes watcher, manager, steward, and smoke writers", asyn
   });
 });
 
+test("explicit lock reuse is scoped to the selected PR state", async () => {
+  await withTempDir("lock-scope", async (tmp) => {
+    const first = resolvePrState({ rootDir: tmp, team: "alpha", pr: 1 });
+    const second = resolvePrState({ rootDir: tmp, team: "alpha", pr: 2 });
+    const firstLock = await acquirePrStateLock(first, {
+      owner: "watcher",
+      mode: "test",
+      operation: "hold",
+      timeoutMs: 0,
+      staleMs: 30_000
+    });
+    const secondLock = await acquirePrStateLock(second, {
+      owner: "steward",
+      mode: "test",
+      operation: "hold",
+      timeoutMs: 0,
+      staleMs: 30_000
+    });
+
+    try {
+      await assert.rejects(
+        writePrStateJson(second, "watcher", "watcher-status.json", {
+          schema_version: 1,
+          status: "wrong-state"
+        }, { lock: firstLock }),
+        (error) => error?.code === "lock_state_mismatch" && error?.exitCode === 20
+      );
+      assert.equal(existsSync(path.join(second.stateDir, "watcher-status.json")), false);
+    } finally {
+      await secondLock.release();
+      await firstLock.release();
+    }
+  });
+});
+
+test("status records stale lock breaks durably", async () => {
+  await withTempDir("stale-status", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    await writeFile(path.join(state.stateDir, "pr-feedback.lock"), JSON.stringify({
+      schema_version: 1,
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    }, null, 2) + "\n");
+
+    const status = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1"]);
+
+    assert.equal(status.status, 0, status.stderr);
+    const summary = parseStdoutJson(status);
+    assert.equal(summary.mode, "status");
+    assert.equal(summary.status, "status_checked");
+    const recorded = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(recorded.mode, "status");
+    assert.equal(recorded.status, "status_checked");
+    assert.equal(recorded.exit_code, 0);
+    assert.equal(recorded.stale_lock_break.previous_lock.operation, "stale");
+    assert.equal(existsSync(path.join(state.stateDir, "pr-feedback.lock")), false);
+  });
+});
+
 test("owner allowlists reject cross-owner and escaping writes", async () => {
   await withTempDir("owners", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });

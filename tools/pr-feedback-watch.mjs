@@ -87,7 +87,19 @@ async function runStatus(options) {
   try {
     lock = await acquireWatcherLock(state, "status", options);
     const config = await loadConfig(state);
-    const watcherStatus = await readOptionalJson(state, "watcher-status.json");
+    let watcherStatus = await readOptionalJson(state, "watcher-status.json");
+    if (lock.staleBreak) {
+      watcherStatus = watcherStatusRecord({
+        mode: "status",
+        status: "status_checked",
+        exitCode: 0,
+        staleLockBreak: lock.staleBreak
+      });
+      await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatus, {
+        lock,
+        operation: "write_watcher_status"
+      });
+    }
     const closeout = await readOptionalJson(state, "closeout.json");
     writeSummary(baseSummary(state, config, {
       mode: "status",
@@ -115,7 +127,7 @@ async function runReplay(options) {
       lock,
       operation: "write_event_index"
     });
-    await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatus({
+    await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatusRecord({
       mode: "replay",
       status: "replayed",
       exitCode: 0,
@@ -209,7 +221,7 @@ async function handleStateError(error, state, lock, mode) {
   process.stderr.write(`${error.message}\n`);
 
   if (lock && reason !== "lock_busy") {
-    await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatus({
+    await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatusRecord({
       mode,
       status: "blocked_watcher_unavailable",
       reason,
@@ -296,7 +308,7 @@ function errorSummary(state, { mode, status, reason, exitCode, error }) {
   };
 }
 
-function watcherStatus({ mode, status, reason = null, exitCode, error = null, staleLockBreak = null }) {
+function watcherStatusRecord({ mode, status, reason = null, exitCode, error = null, staleLockBreak = null }) {
   const now = new Date().toISOString();
   return {
     schema_version: PR_STATE_SCHEMA_VERSION,

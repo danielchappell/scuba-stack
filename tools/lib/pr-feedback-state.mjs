@@ -159,6 +159,7 @@ export async function acquirePrStateLock(state, {
         owner,
         mode,
         operation,
+        stateDir: state.stateDir,
         lockPath,
         staleBreak,
         async release() {
@@ -419,12 +420,7 @@ async function ensureStateDir(state) {
 async function runStateWrite(state, owner, options, fn) {
   const lock = options.lock;
   if (lock) {
-    if (lock.owner !== owner) {
-      throw new PrStateError(`Cannot use ${lock.owner} lock for ${owner} write`, {
-        code: "owner_path_forbidden",
-        exitCode: 20
-      });
-    }
+    assertLockGuardsState(lock, state, owner);
     return fn();
   }
 
@@ -435,6 +431,33 @@ async function runStateWrite(state, owner, options, fn) {
     timeoutMs: options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS,
     staleMs: options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
   }, fn);
+}
+
+function assertLockGuardsState(lock, state, owner) {
+  if (lock.owner !== owner) {
+    throw new PrStateError(`Cannot use ${lock.owner} lock for ${owner} write`, {
+      code: "owner_path_forbidden",
+      exitCode: 20
+    });
+  }
+
+  const expectedLockPath = path.resolve(state.paths.lock);
+  const actualLockPath = typeof lock.lockPath === "string" ? path.resolve(lock.lockPath) : null;
+  if (actualLockPath !== expectedLockPath) {
+    throw new PrStateError(`Cannot use lock from another PR state for ${owner} write`, {
+      code: "lock_state_mismatch",
+      file: expectedLockPath,
+      exitCode: 20
+    });
+  }
+
+  if (lock.stateDir && path.resolve(lock.stateDir) !== path.resolve(state.stateDir)) {
+    throw new PrStateError(`Cannot use lock from another PR state for ${owner} write`, {
+      code: "lock_state_mismatch",
+      file: expectedLockPath,
+      exitCode: 20
+    });
+  }
 }
 
 async function writeJsonAtomic(state, relativePath, value) {
