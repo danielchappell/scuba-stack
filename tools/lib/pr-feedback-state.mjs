@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -6,9 +7,7 @@ import {
   readFile,
   realpath,
   rename,
-  rm,
-  stat,
-  unlink
+  rm
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -92,9 +91,11 @@ export function resolvePrState({ stateDir, rootDir = process.cwd(), team, pr } =
   }
   const parsedPr = parseRequiredPr(pr);
   validateTeamName(team);
+  const root = path.resolve(rootDir);
+  const rootRelativeParts = [".scuba", "teams", team, "pr-feedback", `pr-${parsedPr}`];
   return buildPrState(
-    path.resolve(rootDir, ".scuba", "teams", team, "pr-feedback", `pr-${parsedPr}`),
-    { team, pr: parsedPr }
+    path.resolve(root, ...rootRelativeParts),
+    { team, pr: parsedPr, rootDir: root, rootRelativeParts }
   );
 }
 
@@ -137,6 +138,7 @@ export async function acquirePrStateLock(state, {
     const now = new Date();
     const lockBody = {
       schema_version: PR_STATE_SCHEMA_VERSION,
+      lock_id: randomUUID(),
       owner,
       pid: process.pid,
       hostname: os.hostname(),
@@ -155,25 +157,28 @@ export async function acquirePrStateLock(state, {
         await handle.close();
       }
       await fsyncDirectory(state.stateDir);
-      return {
+      const lockIdentity = lockIdentityFromLock(lockBody);
+      const lockObject = {
+        lock_id: lockBody.lock_id,
+        lockId: lockBody.lock_id,
+        lockIdentity,
         owner,
         mode,
         operation,
         stateDir: state.stateDir,
         lockPath,
         staleBreak,
+        released: false,
         async release() {
-          try {
-            await unlink(lockPath);
-            await fsyncDirectory(state.stateDir);
-          } catch (error) {
-            if (error.code !== "ENOENT") throw error;
-          }
+          if (lockObject.released) return;
+          await removeLockIfMatching(lockPath, lockIdentity, state.stateDir);
+          lockObject.released = true;
         }
       };
+      return lockObject;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      const broken = await maybeBreakStaleLock(lockPath, staleMs);
+      const broken = await maybeBreakStaleLock(lockPath, staleMs, state.stateDir);
       if (broken) {
         staleBreak = broken;
         continue;
@@ -218,31 +223,19 @@ export async function writePrStateText(state, owner, relativePath, value, option
 export async function appendPrStateJsonl(state, owner, relativePath, record, options = {}) {
   assertOwnerCanWrite(owner, relativePath);
   return runStateWrite(state, owner, options, async () => {
-    const target = await prepareDestination(state, relativePath);
-    const handle = await open(target.path, "a", 0o600);
-    try {
-      await handle.writeFile(JSON.stringify(record) + "\n");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fsyncDirectory(target.parentReal);
+    const existing = await readJsonlRecords(state, relativePath);
+    existing.push(record);
+    await writeTextAtomic(state, relativePath, existing.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
   });
 }
 
 export async function readOptionalJson(state, relativePath) {
-  const file = path.join(state.stateDir, normalizeRelativePath(relativePath));
-  let text;
+  const read = await readOptionalStateText(state, relativePath);
+  if (!read) return null;
   try {
-    text = await readFile(file, "utf8");
+    return JSON.parse(read.text);
   } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new CorruptStateError(file, error.message);
+    throw new CorruptStateError(read.displayPath, error.message);
   }
 }
 
@@ -254,16 +247,11 @@ export async function loadConfig(state) {
 }
 
 export async function replayEvents(state) {
-  const file = state.paths.event_log;
-  let text;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return emptyReplay();
-    throw error;
-  }
+  const read = await readOptionalStateText(state, "events.jsonl");
+  if (!read) return emptyReplay();
+  const { text, displayPath: file } = read;
 
-  const seenRevisions = new Set();
+  const seenRevisions = new Map();
   const currentByEvent = new Map();
   let duplicateRevisionCount = 0;
   let lineNumber = 0;
@@ -289,11 +277,16 @@ export async function replayEvents(state) {
       throw new CorruptStateError(file, `line ${lineNumber}: missing event_revision_id`);
     }
 
-    if (seenRevisions.has(event.event_revision_id)) {
+    const canonical = canonicalJson(event);
+    const priorRevision = seenRevisions.get(event.event_revision_id);
+    if (priorRevision !== undefined) {
+      if (priorRevision !== canonical) {
+        throw new CorruptStateError(file, `line ${lineNumber}: conflicting duplicate event_revision_id '${event.event_revision_id}'`);
+      }
       duplicateRevisionCount += 1;
       continue;
     }
-    seenRevisions.add(event.event_revision_id);
+    seenRevisions.set(event.event_revision_id, canonical);
     currentByEvent.set(event.event_id, event);
   }
 
@@ -370,11 +363,13 @@ export function normalizeRelativePath(relativePath) {
   return parts.join("/");
 }
 
-function buildPrState(stateDir, { team = null, pr = null } = {}) {
+function buildPrState(stateDir, { team = null, pr = null, rootDir = null, rootRelativeParts = null } = {}) {
   const state = {
     stateDir: path.resolve(stateDir),
     team,
-    pr: parseOptionalPr(pr)
+    pr: parseOptionalPr(pr),
+    rootDir,
+    rootRelativeParts
   };
   state.paths = statePaths(state);
   return state;
@@ -406,6 +401,11 @@ function validateTeamName(team) {
 }
 
 async function ensureStateDir(state) {
+  if (state.rootDir && state.rootRelativeParts) {
+    await ensureContainedStateDir(state);
+    return;
+  }
+
   await mkdir(state.stateDir, { recursive: true });
   const entry = await lstat(state.stateDir);
   if (entry.isSymbolicLink() || !entry.isDirectory()) {
@@ -417,10 +417,47 @@ async function ensureStateDir(state) {
   }
 }
 
+async function ensureContainedStateDir(state) {
+  const root = path.resolve(state.rootDir);
+  const rootEntry = await lstat(root);
+  if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory()) {
+    throw new PrStateError(`Invalid PR state root: ${root}`, {
+      code: "invalid_state_path",
+      file: root,
+      exitCode: 20
+    });
+  }
+  const rootReal = await realpath(root);
+  let current = root;
+
+  for (const part of state.rootRelativeParts) {
+    current = path.join(current, part);
+    await mkdir(current).catch((error) => {
+      if (error.code !== "EEXIST") throw error;
+    });
+    const entry = await lstat(current);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      throw new PrStateError(`Unsafe PR state parent: ${current}`, {
+        code: "invalid_state_path",
+        file: current,
+        exitCode: 20
+      });
+    }
+    const currentReal = await realpath(current);
+    if (!isInsideOrSame(currentReal, rootReal)) {
+      throw new PrStateError(`Unsafe PR state parent escapes selected root: ${current}`, {
+        code: "invalid_state_path",
+        file: current,
+        exitCode: 20
+      });
+    }
+  }
+}
+
 async function runStateWrite(state, owner, options, fn) {
   const lock = options.lock;
   if (lock) {
-    assertLockGuardsState(lock, state, owner);
+    await assertLockGuardsState(lock, state, owner);
     return fn();
   }
 
@@ -433,7 +470,7 @@ async function runStateWrite(state, owner, options, fn) {
   }, fn);
 }
 
-function assertLockGuardsState(lock, state, owner) {
+async function assertLockGuardsState(lock, state, owner) {
   if (lock.owner !== owner) {
     throw new PrStateError(`Cannot use ${lock.owner} lock for ${owner} write`, {
       code: "owner_path_forbidden",
@@ -454,6 +491,23 @@ function assertLockGuardsState(lock, state, owner) {
   if (lock.stateDir && path.resolve(lock.stateDir) !== path.resolve(state.stateDir)) {
     throw new PrStateError(`Cannot use lock from another PR state for ${owner} write`, {
       code: "lock_state_mismatch",
+      file: expectedLockPath,
+      exitCode: 20
+    });
+  }
+
+  if (lock.released) {
+    throw new PrStateError(`Cannot use released lock for ${owner} write`, {
+      code: "lock_not_held",
+      file: expectedLockPath,
+      exitCode: 20
+    });
+  }
+
+  const current = await readLockForIdentity(expectedLockPath);
+  if (!current.schemaValid || !lockIdentityMatches(current.identity, lock.lockIdentity)) {
+    throw new PrStateError(`Cannot use inactive lock for ${owner} write`, {
+      code: "lock_not_held",
       file: expectedLockPath,
       exitCode: 20
     });
@@ -548,41 +602,263 @@ async function assertDestinationSafe(target) {
   }
 }
 
-async function maybeBreakStaleLock(lockPath, fallbackStaleMs) {
-  let raw = null;
-  let stats = null;
+async function maybeBreakStaleLock(lockPath, fallbackStaleMs, stateDir) {
+  let current;
   try {
-    stats = await stat(lockPath);
-    raw = await readFile(lockPath, "utf8");
+    current = await readLockForIdentity(lockPath);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
 
+  if (!lockIsBreakable(current, fallbackStaleMs)) return null;
+  return removeLockIfMatching(lockPath, current.identity, stateDir, {
+    broken_at: new Date().toISOString(),
+    previous_lock: current.report
+  });
+}
+
+async function readOptionalStateText(state, relativePath) {
+  const resolved = await resolveExistingStateFile(state, relativePath);
+  if (!resolved) return null;
+  return {
+    text: await readFile(resolved.path, "utf8"),
+    displayPath: resolved.displayPath
+  };
+}
+
+async function resolveExistingStateFile(state, relativePath) {
+  const normalized = normalizeRelativePath(relativePath);
+  await ensureStateDir(state);
+  const stateRoot = path.resolve(state.stateDir);
+  const stateReal = await realpath(state.stateDir);
+  const parts = normalized.split("/");
+  const name = parts.at(-1);
+  let current = state.stateDir;
+
+  for (const part of parts.slice(0, -1)) {
+    current = path.join(current, part);
+    let entry;
+    try {
+      entry = await lstat(current);
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      throw new PrStateError(`Unsafe PR state parent: ${current}`, {
+        code: "invalid_state_path",
+        file: current,
+        exitCode: 20
+      });
+    }
+    const currentReal = await realpath(current);
+    if (!isInsideOrSame(currentReal, stateReal)) {
+      throw new PrStateError(`Unsafe PR state parent escapes state dir: ${current}`, {
+        code: "invalid_state_path",
+        file: current,
+        exitCode: 20
+      });
+    }
+  }
+
+  const displayPath = path.resolve(state.stateDir, ...parts);
+  if (!isInsideOrSame(displayPath, stateRoot)) {
+    throw new PrStateError(`State path escapes state dir: ${relativePath}`, {
+      code: "invalid_state_path",
+      exitCode: 20
+    });
+  }
+
+  const file = path.join(current, name);
+  let entry;
+  try {
+    entry = await lstat(file);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  if (entry.isSymbolicLink() || !entry.isFile()) {
+    throw new PrStateError(`Unsafe PR state file: ${displayPath}`, {
+      code: "invalid_state_path",
+      file: displayPath,
+      exitCode: 20
+    });
+  }
+  const fileReal = await realpath(file);
+  if (!isInsideOrSame(fileReal, stateReal)) {
+    throw new PrStateError(`State file escapes state dir: ${displayPath}`, {
+      code: "invalid_state_path",
+      file: displayPath,
+      exitCode: 20
+    });
+  }
+  return { path: fileReal, displayPath };
+}
+
+async function readJsonlRecords(state, relativePath) {
+  const read = await readOptionalStateText(state, relativePath);
+  if (!read) return [];
+  const records = [];
+  let lineNumber = 0;
+  for (const line of read.text.split(/\n/)) {
+    lineNumber += 1;
+    if (!line.trim()) continue;
+    try {
+      records.push(JSON.parse(line));
+    } catch (error) {
+      throw new CorruptStateError(read.displayPath, `line ${lineNumber}: ${error.message}`);
+    }
+  }
+  return records;
+}
+
+async function readLockForIdentity(lockPath) {
+  let stats;
+  try {
+    stats = await lstat(lockPath);
+  } catch (error) {
+    if (error.code === "ENOENT") throw error;
+    throw error;
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new PrStateError(`Unsafe PR feedback lock: ${lockPath}`, {
+      code: "invalid_state_path",
+      file: lockPath,
+      exitCode: 20
+    });
+  }
+
+  const raw = await readFile(lockPath, "utf8");
   let lock = null;
+  let parseError = null;
   try {
     lock = JSON.parse(raw);
-  } catch {
-    const expiredByMtime = Date.now() - stats.mtimeMs > fallbackStaleMs;
-    if (!expiredByMtime) return null;
+  } catch (error) {
+    parseError = error;
   }
+  const schemaValid = validLockSchema(lock);
+  const identity = schemaValid
+    ? lockIdentityFromLock(lock, raw)
+    : corruptLockIdentity(raw, stats);
+  return {
+    raw,
+    stats,
+    lock,
+    parseError,
+    schemaValid,
+    identity,
+    report: lockReport(lock, { schemaValid, stats, parseError })
+  };
+}
 
-  if (lock) {
-    const expiresAt = Date.parse(lock.expires_at);
-    if (!Number.isFinite(expiresAt) || expiresAt > Date.now()) return null;
-    if (lock.hostname === os.hostname() && isProcessAlive(lock.pid)) return null;
+function validLockSchema(lock) {
+  return Boolean(lock &&
+    typeof lock === "object" &&
+    !Array.isArray(lock) &&
+    lock.schema_version === PR_STATE_SCHEMA_VERSION &&
+    typeof lock.lock_id === "string" &&
+    lock.lock_id.length > 0 &&
+    OWNER_KINDS.has(lock.owner) &&
+    Number.isInteger(lock.pid) &&
+    typeof lock.hostname === "string" &&
+    lock.hostname.length > 0 &&
+    Number.isFinite(Date.parse(lock.started_at)) &&
+    Number.isFinite(Date.parse(lock.expires_at)) &&
+    typeof lock.mode === "string" &&
+    lock.mode.length > 0 &&
+    typeof lock.operation === "string" &&
+    lock.operation.length > 0);
+}
+
+function lockIsBreakable(current, fallbackStaleMs) {
+  const expiresAt = current.lock && typeof current.lock === "object"
+    ? Date.parse(current.lock.expires_at)
+    : NaN;
+  if (Number.isFinite(expiresAt)) {
+    if (expiresAt > Date.now()) return false;
+    if (current.lock.hostname === os.hostname() && isProcessAlive(current.lock.pid)) return false;
+    return true;
+  }
+  return Date.now() - current.stats.mtimeMs > fallbackStaleMs;
+}
+
+async function removeLockIfMatching(lockPath, expectedIdentity, stateDir, removedValue = true) {
+  const quarantine = path.join(path.dirname(lockPath), `.pr-feedback.lock.removing-${process.pid}-${Date.now()}-${randomUUID()}`);
+  try {
+    await rename(lockPath, quarantine);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
   }
 
   try {
-    await unlink(lockPath);
+    const moved = await readLockForIdentity(quarantine);
+    if (!lockIdentityMatches(moved.identity, expectedIdentity)) {
+      await restoreQuarantinedLock(quarantine, lockPath);
+      return null;
+    }
+    await rm(quarantine, { force: true });
+    await fsyncDirectory(stateDir);
+    return removedValue;
+  } catch (error) {
+    await restoreQuarantinedLock(quarantine, lockPath).catch(() => {});
+    throw error;
+  }
+}
+
+async function restoreQuarantinedLock(quarantine, lockPath) {
+  try {
+    await rename(quarantine, lockPath);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
+}
 
+function lockIdentityFromLock(lock, raw = JSON.stringify(lock, null, 2) + "\n") {
   return {
-    broken_at: new Date().toISOString(),
-    previous_lock: lock ?? { corrupt_lock: true, mtime: stats.mtime.toISOString() }
+    schema_valid: true,
+    lock_id: lock.lock_id,
+    owner: lock.owner,
+    started_at: lock.started_at,
+    content_sha256: sha256(raw)
   };
+}
+
+function corruptLockIdentity(raw, stats) {
+  return {
+    schema_valid: false,
+    content_sha256: sha256(raw),
+    size: stats.size,
+    mtime_ms: stats.mtimeMs
+  };
+}
+
+function lockIdentityMatches(actual, expected) {
+  if (!actual || !expected) return false;
+  if (actual.schema_valid !== expected.schema_valid) return false;
+  if (actual.content_sha256 !== expected.content_sha256) return false;
+  if (expected.schema_valid) {
+    return actual.lock_id === expected.lock_id &&
+      actual.owner === expected.owner &&
+      actual.started_at === expected.started_at;
+  }
+  return actual.size === expected.size && actual.mtime_ms === expected.mtime_ms;
+}
+
+function lockReport(lock, { schemaValid, stats, parseError }) {
+  const report = {
+    schema_valid: schemaValid,
+    corrupt_lock: !schemaValid,
+    mtime: stats.mtime.toISOString()
+  };
+  if (parseError) report.parse_error = parseError.message;
+  if (lock && typeof lock === "object" && !Array.isArray(lock)) {
+    for (const key of ["schema_version", "lock_id", "owner", "pid", "hostname", "started_at", "expires_at", "mode", "operation"]) {
+      if (lock[key] !== undefined) report[key] = lock[key];
+    }
+  }
+  return report;
 }
 
 function isProcessAlive(pid) {
@@ -674,6 +950,26 @@ function emptyReplay() {
     current_event_ids: [],
     current_events: []
   };
+}
+
+function canonicalJson(value) {
+  return JSON.stringify(canonicalize(value));
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map((entry) => canonicalize(entry));
+  if (value && typeof value === "object") {
+    const normalized = {};
+    for (const key of Object.keys(value).sort()) {
+      normalized[key] = canonicalize(value[key]);
+    }
+    return normalized;
+  }
+  return value;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function fsyncDirectory(dir) {
