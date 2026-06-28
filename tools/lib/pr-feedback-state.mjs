@@ -4,7 +4,6 @@ import {
   lstat,
   mkdir,
   open,
-  readFile,
   realpath,
   rename,
   rm
@@ -16,6 +15,7 @@ import process from "node:process";
 export const PR_STATE_SCHEMA_VERSION = 1;
 export const DEFAULT_LOCK_TIMEOUT_MS = 100;
 export const DEFAULT_LOCK_STALE_MS = 5 * 60 * 1000;
+export const MAX_LOCK_DURATION_MS = 60 * 60 * 1000;
 export const DEFAULT_TEXT_LIMIT_BYTES = 1024 * 1024;
 
 export const PR_STATE_OWNERSHIP = Object.freeze({
@@ -28,17 +28,24 @@ export const PR_STATE_OWNERSHIP = Object.freeze({
   ]),
   manager: Object.freeze(["config.json"]),
   steward: Object.freeze([
+    "config.json",
     "dispositions.json",
     "closeout.json",
     "push-log.jsonl",
     "hardening-rounds/"
   ]),
-  smoke: Object.freeze(["audit/"])
+  smoke: Object.freeze([
+    "config.json",
+    "audit/"
+  ])
 });
 
 const OWNER_KINDS = new Set(Object.keys(PR_STATE_OWNERSHIP));
 const LOCK_REMOVAL_CLAIM_GRACE_MS = 1000;
 const LOCK_REMOVAL_CLAIM_LEASE_MS = DEFAULT_LOCK_STALE_MS;
+const LOCK_TIME_SKEW_GRACE_MS = 1000;
+const READ_FILE_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+const LOCK_OBJECTS = new WeakMap();
 
 export class PrStateError extends Error {
   constructor(message, { code, file, exitCode } = {}) {
@@ -130,10 +137,12 @@ export async function acquirePrStateLock(state, {
   validateOwner(owner);
   if (!mode) throw new PrStateError("Lock mode is required", { code: "usage", exitCode: 30 });
   if (!operation) throw new PrStateError("Lock operation is required", { code: "usage", exitCode: 30 });
+  const effectiveTimeoutMs = validateLockDuration(timeoutMs, "lock timeout", { min: 0 });
+  const effectiveStaleMs = validateLockDuration(staleMs, "lock stale window", { min: 1 });
 
   await ensureStateDir(state);
   const lockPath = state.paths.lock;
-  const deadline = Date.now() + Math.max(0, timeoutMs);
+  const deadline = Date.now() + effectiveTimeoutMs;
   let staleBreak = null;
 
   while (true) {
@@ -145,7 +154,7 @@ export async function acquirePrStateLock(state, {
       pid: process.pid,
       hostname: os.hostname(),
       started_at: now.toISOString(),
-      expires_at: new Date(now.getTime() + Math.max(1, staleMs)).toISOString(),
+      expires_at: new Date(now.getTime() + effectiveStaleMs).toISOString(),
       mode,
       operation
     };
@@ -172,15 +181,33 @@ export async function acquirePrStateLock(state, {
         staleBreak,
         released: false,
         async release() {
-          if (lockObject.released) return;
-          await removeLockIfMatching(lockPath, lockIdentity, state.stateDir);
-          lockObject.released = true;
+          const metadata = LOCK_OBJECTS.get(lockObject);
+          if (!metadata || metadata.released) return { released: false, reason: "already_released" };
+          const result = await removeLockIfMatching(lockPath, lockIdentity, state.stateDir);
+          if (result.removed || result.missing || result.mismatched) {
+            metadata.released = true;
+            lockObject.released = true;
+            LOCK_OBJECTS.delete(lockObject);
+            return result;
+          }
+          throw new PrStateError(`Could not release PR feedback state lock: ${lockPath}`, {
+            code: "lock_release_blocked",
+            file: lockPath,
+            exitCode: 75
+          });
         }
       };
+      LOCK_OBJECTS.set(lockObject, {
+        lockIdentity,
+        owner,
+        stateDir: state.stateDir,
+        lockPath,
+        released: false
+      });
       return lockObject;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      const broken = await maybeBreakStaleLock(lockPath, staleMs, state.stateDir);
+      const broken = await maybeBreakStaleLock(lockPath, effectiveStaleMs, state.stateDir);
       if (broken) {
         staleBreak = broken;
         continue;
@@ -269,15 +296,7 @@ export async function replayEvents(state) {
       throw new CorruptStateError(file, `line ${lineNumber}: ${error.message}`);
     }
 
-    if (!event || typeof event !== "object" || Array.isArray(event)) {
-      throw new CorruptStateError(file, `line ${lineNumber}: event revision is not an object`);
-    }
-    if (typeof event.event_id !== "string" || event.event_id.length === 0) {
-      throw new CorruptStateError(file, `line ${lineNumber}: missing event_id`);
-    }
-    if (typeof event.event_revision_id !== "string" || event.event_revision_id.length === 0) {
-      throw new CorruptStateError(file, `line ${lineNumber}: missing event_revision_id`);
-    }
+    validateEventRevision(event, file, lineNumber);
 
     const canonical = canonicalJson(event);
     const priorRevision = seenRevisions.get(event.event_revision_id);
@@ -304,7 +323,7 @@ export async function replayEvents(state) {
 }
 
 export function eventIndexFromReplay(replay) {
-  const latest_by_event_id = {};
+  const latest_by_event_id = Object.create(null);
   for (const event of replay.current_events) {
     latest_by_event_id[event.event_id] = event.event_revision_id;
   }
@@ -315,6 +334,24 @@ export function eventIndexFromReplay(replay) {
     duplicate_revision_count: replay.duplicate_revision_count,
     latest_by_event_id
   };
+}
+
+function validateEventRevision(event, file, lineNumber) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    throw new CorruptStateError(file, `line ${lineNumber}: event revision is not an object`);
+  }
+  if (event.schema_version !== PR_STATE_SCHEMA_VERSION) {
+    throw new CorruptStateError(file, `line ${lineNumber}: schema_version must be 1`);
+  }
+  if (typeof event.event_id !== "string" || event.event_id.trim().length === 0) {
+    throw new CorruptStateError(file, `line ${lineNumber}: missing event_id`);
+  }
+  if (typeof event.event_revision_id !== "string" || event.event_revision_id.trim().length === 0) {
+    throw new CorruptStateError(file, `line ${lineNumber}: missing event_revision_id`);
+  }
+  if (typeof event.observed_at !== "string" || !Number.isFinite(Date.parse(event.observed_at))) {
+    throw new CorruptStateError(file, `line ${lineNumber}: observed_at must be an ISO timestamp`);
+  }
 }
 
 export function validateOwner(owner) {
@@ -383,14 +420,17 @@ function parseOptionalPr(value) {
 }
 
 function parseRequiredPr(value) {
-  const number = Number(value);
-  if (!Number.isInteger(number) || number <= 0) {
-    throw new PrStateError(`Invalid PR number '${value}'`, {
-      code: "usage",
-      exitCode: 30
-    });
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return value;
   }
-  return number;
+  if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  }
+  throw new PrStateError(`Invalid PR number '${value}'`, {
+    code: "usage",
+    exitCode: 30
+  });
 }
 
 function validateTeamName(team) {
@@ -473,15 +513,24 @@ async function runStateWrite(state, owner, options, fn) {
 }
 
 async function assertLockGuardsState(lock, state, owner) {
-  if (lock.owner !== owner) {
-    throw new PrStateError(`Cannot use ${lock.owner} lock for ${owner} write`, {
+  const metadata = LOCK_OBJECTS.get(lock);
+  if (!metadata) {
+    throw new PrStateError(`Cannot use unrecognized lock for ${owner} write`, {
+      code: "lock_not_held",
+      file: state.paths.lock,
+      exitCode: 20
+    });
+  }
+
+  if (metadata.owner !== owner) {
+    throw new PrStateError(`Cannot use ${metadata.owner} lock for ${owner} write`, {
       code: "owner_path_forbidden",
       exitCode: 20
     });
   }
 
   const expectedLockPath = path.resolve(state.paths.lock);
-  const actualLockPath = typeof lock.lockPath === "string" ? path.resolve(lock.lockPath) : null;
+  const actualLockPath = path.resolve(metadata.lockPath);
   if (actualLockPath !== expectedLockPath) {
     throw new PrStateError(`Cannot use lock from another PR state for ${owner} write`, {
       code: "lock_state_mismatch",
@@ -490,7 +539,7 @@ async function assertLockGuardsState(lock, state, owner) {
     });
   }
 
-  if (lock.stateDir && path.resolve(lock.stateDir) !== path.resolve(state.stateDir)) {
+  if (path.resolve(metadata.stateDir) !== path.resolve(state.stateDir)) {
     throw new PrStateError(`Cannot use lock from another PR state for ${owner} write`, {
       code: "lock_state_mismatch",
       file: expectedLockPath,
@@ -498,7 +547,7 @@ async function assertLockGuardsState(lock, state, owner) {
     });
   }
 
-  if (lock.released) {
+  if (metadata.released || lock.released) {
     throw new PrStateError(`Cannot use released lock for ${owner} write`, {
       code: "lock_not_held",
       file: expectedLockPath,
@@ -506,8 +555,11 @@ async function assertLockGuardsState(lock, state, owner) {
     });
   }
 
-  const current = await readLockForIdentity(expectedLockPath);
-  if (!current.schemaValid || !lockIdentityMatches(current.identity, lock.lockIdentity)) {
+  const current = await readLockForIdentity(expectedLockPath, state.stateDir);
+  if (!current.schemaValid ||
+      current.lock.owner !== owner ||
+      metadata.lockIdentity.owner !== owner ||
+      !lockIdentityMatches(current.identity, metadata.lockIdentity)) {
     throw new PrStateError(`Cannot use inactive lock for ${owner} write`, {
       code: "lock_not_held",
       file: expectedLockPath,
@@ -607,29 +659,34 @@ async function assertDestinationSafe(target) {
 async function maybeBreakStaleLock(lockPath, fallbackStaleMs, stateDir) {
   let current;
   try {
-    current = await readLockForIdentity(lockPath);
+    current = await readLockForIdentity(lockPath, stateDir);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
 
   if (!lockIsBreakable(current, fallbackStaleMs)) return null;
-  return removeLockIfMatching(lockPath, current.identity, stateDir, {
+  const removed = await removeLockIfMatching(lockPath, current.identity, stateDir, {
     broken_at: new Date().toISOString(),
     previous_lock: current.report
   });
+  return removed.removed ? removed.value : null;
 }
 
 async function readOptionalStateText(state, relativePath) {
-  const resolved = await resolveExistingStateFile(state, relativePath);
+  const resolved = await openExistingStateFile(state, relativePath);
   if (!resolved) return null;
-  return {
-    text: await readFile(resolved.path, "utf8"),
-    displayPath: resolved.displayPath
-  };
+  try {
+    return {
+      text: await resolved.handle.readFile("utf8"),
+      displayPath: resolved.displayPath
+    };
+  } finally {
+    await resolved.handle.close();
+  }
 }
 
-async function resolveExistingStateFile(state, relativePath) {
+async function openExistingStateFile(state, relativePath) {
   const normalized = normalizeRelativePath(relativePath);
   await ensureStateDir(state);
   const stateRoot = path.resolve(state.stateDir);
@@ -673,29 +730,66 @@ async function resolveExistingStateFile(state, relativePath) {
   }
 
   const file = path.join(current, name);
-  let entry;
+  const opened = await openValidatedFile(file, displayPath);
+  if (!opened) return null;
   try {
-    entry = await lstat(file);
+    const fileReal = await realpath(file);
+    if (!isInsideOrSame(fileReal, stateReal)) {
+      throw new PrStateError(`State file escapes state dir: ${displayPath}`, {
+        code: "invalid_state_path",
+        file: displayPath,
+        exitCode: 20
+      });
+    }
+  } catch (error) {
+    await opened.handle.close();
+    throw error;
+  }
+  return { ...opened, displayPath };
+}
+
+async function openValidatedFile(file, displayPath) {
+  let pathStats;
+  try {
+    pathStats = await lstat(file);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
-  if (entry.isSymbolicLink() || !entry.isFile()) {
+  if (pathStats.isSymbolicLink() || !pathStats.isFile() || hasSharedInode(pathStats)) {
     throw new PrStateError(`Unsafe PR state file: ${displayPath}`, {
       code: "invalid_state_path",
       file: displayPath,
       exitCode: 20
     });
   }
-  const fileReal = await realpath(file);
-  if (!isInsideOrSame(fileReal, stateReal)) {
-    throw new PrStateError(`State file escapes state dir: ${displayPath}`, {
-      code: "invalid_state_path",
-      file: displayPath,
-      exitCode: 20
-    });
+
+  let handle;
+  try {
+    handle = await open(file, READ_FILE_FLAGS);
+    const descriptorStats = await handle.stat();
+    if (!descriptorStats.isFile() ||
+        hasSharedInode(descriptorStats) ||
+        !sameFileIdentity(pathStats, descriptorStats)) {
+      throw new PrStateError(`Unsafe PR state file changed before read: ${displayPath}`, {
+        code: "invalid_state_path",
+        file: displayPath,
+        exitCode: 20
+      });
+    }
+    return { handle, stats: descriptorStats };
+  } catch (error) {
+    if (handle) await handle.close().catch(() => {});
+    if (error.code === "ENOENT") return null;
+    if (error.code === "ELOOP") {
+      throw new PrStateError(`Unsafe PR state file: ${displayPath}`, {
+        code: "invalid_state_path",
+        file: displayPath,
+        exitCode: 20
+      });
+    }
+    throw error;
   }
-  return { path: fileReal, displayPath };
 }
 
 async function readJsonlRecords(state, relativePath) {
@@ -715,23 +809,31 @@ async function readJsonlRecords(state, relativePath) {
   return records;
 }
 
-async function readLockForIdentity(lockPath) {
-  let stats;
-  try {
-    stats = await lstat(lockPath);
-  } catch (error) {
-    if (error.code === "ENOENT") throw error;
+async function readLockForIdentity(lockPath, stateDir) {
+  const opened = await openValidatedFile(lockPath, lockPath);
+  if (!opened) {
+    const error = new Error(`ENOENT: no such file or directory, open '${lockPath}'`);
+    error.code = "ENOENT";
     throw error;
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new PrStateError(`Unsafe PR feedback lock: ${lockPath}`, {
-      code: "invalid_state_path",
-      file: lockPath,
-      exitCode: 20
-    });
-  }
 
-  const raw = await readFile(lockPath, "utf8");
+  let raw;
+  try {
+    raw = await opened.handle.readFile("utf8");
+  } finally {
+    await opened.handle.close();
+  }
+  if (stateDir) {
+    const lockReal = await realpath(lockPath);
+    const stateReal = await realpath(stateDir);
+    if (!isInsideOrSame(lockReal, stateReal)) {
+      throw new PrStateError(`PR feedback lock escapes state dir: ${lockPath}`, {
+        code: "invalid_state_path",
+        file: lockPath,
+        exitCode: 20
+      });
+    }
+  }
   let lock = null;
   let parseError = null;
   try {
@@ -742,19 +844,21 @@ async function readLockForIdentity(lockPath) {
   const schemaValid = validLockSchema(lock);
   const identity = schemaValid
     ? lockIdentityFromLock(lock, raw)
-    : corruptLockIdentity(raw, stats);
+    : corruptLockIdentity(raw, opened.stats);
   return {
     raw,
-    stats,
+    stats: opened.stats,
     lock,
     parseError,
     schemaValid,
     identity,
-    report: lockReport(lock, { schemaValid, stats, parseError })
+    report: lockReport(lock, { schemaValid, stats: opened.stats, parseError })
   };
 }
 
 function validLockSchema(lock) {
+  const startedAtMs = Date.parse(lock?.started_at);
+  const expiresAtMs = Date.parse(lock?.expires_at);
   return Boolean(lock &&
     typeof lock === "object" &&
     !Array.isArray(lock) &&
@@ -765,8 +869,11 @@ function validLockSchema(lock) {
     Number.isInteger(lock.pid) &&
     typeof lock.hostname === "string" &&
     lock.hostname.length > 0 &&
-    Number.isFinite(Date.parse(lock.started_at)) &&
-    Number.isFinite(Date.parse(lock.expires_at)) &&
+    Number.isFinite(startedAtMs) &&
+    Number.isFinite(expiresAtMs) &&
+    expiresAtMs > startedAtMs &&
+    expiresAtMs - startedAtMs <= MAX_LOCK_DURATION_MS &&
+    startedAtMs - Date.now() <= LOCK_TIME_SKEW_GRACE_MS &&
     typeof lock.mode === "string" &&
     lock.mode.length > 0 &&
     typeof lock.operation === "string" &&
@@ -777,34 +884,33 @@ function lockIsBreakable(current, fallbackStaleMs) {
   if (current.schemaValid) {
     const expiresAt = Date.parse(current.lock.expires_at);
     if (expiresAt > Date.now()) return false;
-    if (current.lock.hostname === os.hostname() && isProcessAlive(current.lock.pid)) return false;
     return true;
   }
-  return Date.now() - current.stats.mtimeMs > fallbackStaleMs;
+  return metadataMtimeIsStale(current.stats.mtimeMs, fallbackStaleMs);
 }
 
 async function removeLockIfMatching(lockPath, expectedIdentity, stateDir, removedValue = true) {
   const claimPath = lockRemovalClaimPath(lockPath, expectedIdentity);
   const claimed = await claimLockRemoval(claimPath, expectedIdentity);
-  if (!claimed) return null;
+  if (!claimed) return { removed: false, reason: "claim_blocked" };
 
   try {
     let current;
     try {
-      current = await readLockForIdentity(lockPath);
+      current = await readLockForIdentity(lockPath, stateDir);
     } catch (error) {
-      if (error.code === "ENOENT") return null;
+      if (error.code === "ENOENT") return { removed: false, missing: true, reason: "missing" };
       throw error;
     }
     if (!lockIdentityMatches(current.identity, expectedIdentity)) {
-      return null;
+      return { removed: false, mismatched: true, reason: "mismatched" };
     }
     if (!await lockRemovalClaimMatches(claimPath, claimed)) {
-      return null;
+      return { removed: false, reason: "claim_changed" };
     }
     await rm(lockPath, { force: true });
     await fsyncDirectory(stateDir);
-    return removedValue;
+    return { removed: true, value: removedValue };
   } finally {
     await releaseLockRemovalClaim(claimPath, claimed);
     await fsyncDirectory(path.dirname(claimPath));
@@ -849,29 +955,34 @@ async function claimLockRemoval(claimPath, expectedIdentity) {
 }
 
 async function readLockRemovalClaim(claimPath) {
-  let stats;
+  let opened;
   try {
-    stats = await lstat(claimPath);
+    opened = await openValidatedFile(claimPath, claimPath);
   } catch (error) {
-    if (error.code === "ENOENT") {
-      return { exists: false, stale: true };
+    if (error instanceof PrStateError && error.code === "invalid_state_path") {
+      const unsafeStats = await lstat(claimPath).catch(() => null);
+      return { exists: true, stats: unsafeStats, claim: null, valid: false, unsafe: true };
     }
     throw error;
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    return { exists: true, stats, claim: null, valid: false };
-  }
+  if (!opened) return { exists: false, stale: true };
 
+  let raw;
+  try {
+    raw = await opened.handle.readFile("utf8");
+  } finally {
+    await opened.handle.close();
+  }
   let claim = null;
   try {
-    claim = JSON.parse(await readFile(claimPath, "utf8"));
+    claim = JSON.parse(raw);
   } catch {
-    return { exists: true, stats, claim: null, valid: false };
+    return { exists: true, stats: opened.stats, claim: null, valid: false };
   }
 
   return {
     exists: true,
-    stats,
+    stats: opened.stats,
     claim,
     valid: validLockRemovalClaim(claim)
   };
@@ -894,8 +1005,8 @@ function validLockRemovalClaim(claim) {
 
 function removalClaimIsStale(existing, identityKey) {
   if (!existing.exists) return true;
-  const ageMs = Date.now() - existing.stats.mtimeMs;
-  if (!existing.valid) return ageMs > LOCK_REMOVAL_CLAIM_GRACE_MS;
+  if (!existing.stats) return true;
+  if (!existing.valid) return metadataMtimeIsStale(existing.stats.mtimeMs, LOCK_REMOVAL_CLAIM_GRACE_MS);
 
   const claim = existing.claim;
   if (claim.identity_key !== identityKey) return true;
@@ -909,6 +1020,7 @@ function removalClaimLeaseExpired(existing) {
   const claimedAtMs = Date.parse(existing.claim.claimed_at);
   if (!Number.isFinite(claimedAtMs)) return true;
   if (claimedAtMs - now > LOCK_REMOVAL_CLAIM_GRACE_MS) return true;
+  if (existing.stats.mtimeMs - now > LOCK_REMOVAL_CLAIM_GRACE_MS) return true;
   if (now - claimedAtMs > LOCK_REMOVAL_CLAIM_LEASE_MS) return true;
   return now - existing.stats.mtimeMs > LOCK_REMOVAL_CLAIM_LEASE_MS;
 }
@@ -993,6 +1105,31 @@ function isProcessAlive(pid) {
   }
 }
 
+function validateLockDuration(value, label, { min }) {
+  if (!Number.isSafeInteger(value) || value < min || value > MAX_LOCK_DURATION_MS) {
+    throw new PrStateError(`${label} must be a safe integer between ${min} and ${MAX_LOCK_DURATION_MS} milliseconds`, {
+      code: "usage",
+      exitCode: 30
+    });
+  }
+  return value;
+}
+
+function metadataMtimeIsStale(mtimeMs, staleMs) {
+  const now = Date.now();
+  if (!Number.isFinite(mtimeMs)) return true;
+  if (mtimeMs - now > LOCK_TIME_SKEW_GRACE_MS) return true;
+  return now - mtimeMs > staleMs;
+}
+
+function hasSharedInode(stats) {
+  return Number.isInteger(stats.nlink) && stats.nlink > 1;
+}
+
+function sameFileIdentity(first, second) {
+  return first.dev === second.dev && first.ino === second.ino;
+}
+
 function validateConfig(config, file, state) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new ConfigurationError(file, "config must be an object");
@@ -1043,15 +1180,19 @@ function validRepo(repo) {
   if (typeof repo === "string") return /^[^/\s]+\/[^/\s]+$/.test(repo);
   return Boolean(repo &&
     typeof repo === "object" &&
-    typeof repo.owner === "string" &&
-    repo.owner.length > 0 &&
-    typeof repo.name === "string" &&
-    repo.name.length > 0);
+    repoIdentityAtom(repo.owner) &&
+    repoIdentityAtom(repo.name));
 }
 
 function validReviewerConfig(reviewer) {
-  if (typeof reviewer === "string") return reviewer.length > 0;
-  return Boolean(reviewer && typeof reviewer === "object" && !Array.isArray(reviewer));
+  if (typeof reviewer === "string") return reviewer.trim().length > 0;
+  if (!reviewer || typeof reviewer !== "object" || Array.isArray(reviewer)) return false;
+  const identityKeys = ["login", "username", "app_slug", "slug", "name", "id"];
+  return identityKeys.some((key) => {
+    const value = reviewer[key];
+    if (typeof value === "string") return value.trim().length > 0;
+    return key === "id" && Number.isSafeInteger(value) && value > 0;
+  });
 }
 
 function stringArray(value) {
@@ -1059,7 +1200,11 @@ function stringArray(value) {
 }
 
 function nonEmptyString(value) {
-  return typeof value === "string" && value.length > 0;
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function repoIdentityAtom(value) {
+  return typeof value === "string" && /^[^/\s]+$/.test(value);
 }
 
 function emptyReplay() {
@@ -1080,7 +1225,7 @@ function canonicalJson(value) {
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map((entry) => canonicalize(entry));
   if (value && typeof value === "object") {
-    const normalized = {};
+    const normalized = Object.create(null);
     for (const key of Object.keys(value).sort()) {
       normalized[key] = canonicalize(value[key]);
     }

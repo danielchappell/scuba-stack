@@ -6,6 +6,7 @@ import {
   DEFAULT_LOCK_STALE_MS,
   DEFAULT_LOCK_TIMEOUT_MS,
   LockBusyError,
+  MAX_LOCK_DURATION_MS,
   PR_STATE_SCHEMA_VERSION,
   PrStateError,
   acquirePrStateLock,
@@ -38,10 +39,11 @@ let parsed;
 try {
   parsed = parseArgs(process.argv.slice(2));
 } catch (error) {
+  const attemptedMode = attemptedModeFromArgs(process.argv.slice(2));
   process.stderr.write(`${error.message}\n\n${USAGE}`);
   writeSummary({
     schema_version: PR_STATE_SCHEMA_VERSION,
-    mode: null,
+    mode: attemptedMode,
     status: "usage_error",
     reason: "usage",
     exit_code: 30
@@ -62,6 +64,7 @@ try {
   } else if (command === "replay") {
     process.exitCode = await runReplay(options);
   } else if (command === "snapshot" || command === "poll") {
+    resolveStateFromOptions(options);
     process.stderr.write(`pr-feedback-watch.mjs ${command} is recognized but GitHub collection is not implemented in S02.\n`);
     writeSummary({
       schema_version: PR_STATE_SCHEMA_VERSION,
@@ -87,7 +90,10 @@ async function runStatus(options) {
   try {
     lock = await acquireWatcherLock(state, "status", options);
     const config = await loadConfig(state);
-    let watcherStatus = await readOptionalJson(state, "watcher-status.json");
+    let watcherStatus = validateWatcherStatus(
+      await readOptionalJson(state, "watcher-status.json"),
+      state.paths.watcher_status
+    );
     if (lock.staleBreak) {
       watcherStatus = watcherStatusRecord({
         mode: "status",
@@ -100,7 +106,10 @@ async function runStatus(options) {
         operation: "write_watcher_status"
       });
     }
-    const closeout = await readOptionalJson(state, "closeout.json");
+    const closeout = validateCloseout(
+      await readOptionalJson(state, "closeout.json"),
+      state.paths.closeout
+    );
     writeSummary(baseSummary(state, config, {
       mode: "status",
       status: watcherStatus?.status ?? "no_status",
@@ -344,9 +353,24 @@ function exitCodeForError(error) {
 }
 
 function parseNonNegativeInteger(value, label) {
+  return parseBoundedInteger(value, label, { min: 0 });
+}
+
+function parsePositiveInteger(value, label) {
+  return parseBoundedInteger(value, label, { min: 1 });
+}
+
+function parseBoundedInteger(value, label, { min }) {
+  const kind = min === 0 ? "non-negative" : "positive";
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new PrStateError(`${label} must be a ${kind} integer`, {
+      code: "usage",
+      exitCode: 30
+    });
+  }
   const number = Number(value);
-  if (!Number.isInteger(number) || number < 0) {
-    throw new PrStateError(`${label} must be a non-negative integer`, {
+  if (!Number.isSafeInteger(number) || number < min || number > MAX_LOCK_DURATION_MS) {
+    throw new PrStateError(`${label} must be a ${kind} safe integer no greater than ${MAX_LOCK_DURATION_MS}`, {
       code: "usage",
       exitCode: 30
     });
@@ -354,15 +378,58 @@ function parseNonNegativeInteger(value, label) {
   return number;
 }
 
-function parsePositiveInteger(value, label) {
-  const number = Number(value);
-  if (!Number.isInteger(number) || number <= 0) {
-    throw new PrStateError(`${label} must be a positive integer`, {
-      code: "usage",
-      exitCode: 30
-    });
+function attemptedModeFromArgs(args) {
+  const [first] = args;
+  if (!first || first.startsWith("-")) return null;
+  return first;
+}
+
+function validateWatcherStatus(value, file) {
+  if (value === null) return null;
+  if (!plainObject(value)) throw new CorruptStateError(file, "watcher-status.json must be an object");
+  if (value.schema_version !== PR_STATE_SCHEMA_VERSION) {
+    throw new CorruptStateError(file, "watcher-status.json schema_version must be 1");
   }
-  return number;
+  if (!nonEmptyString(value.mode)) throw new CorruptStateError(file, "watcher-status.json mode is required");
+  if (!nonEmptyString(value.status)) throw new CorruptStateError(file, "watcher-status.json status is required");
+  if (value.reason !== null && value.reason !== undefined && !nonEmptyString(value.reason)) {
+    throw new CorruptStateError(file, "watcher-status.json reason must be null or a non-empty string");
+  }
+  if (!validTimestamp(value.started_at) || !validTimestamp(value.completed_at)) {
+    throw new CorruptStateError(file, "watcher-status.json timestamps are required");
+  }
+  if (!Number.isInteger(value.exit_code) || value.exit_code < 0) {
+    throw new CorruptStateError(file, "watcher-status.json exit_code must be a non-negative integer");
+  }
+  if (value.last_error !== null && value.last_error !== undefined && !plainObject(value.last_error)) {
+    throw new CorruptStateError(file, "watcher-status.json last_error must be null or an object");
+  }
+  if (value.stale_lock_break !== null && value.stale_lock_break !== undefined && !plainObject(value.stale_lock_break)) {
+    throw new CorruptStateError(file, "watcher-status.json stale_lock_break must be null or an object");
+  }
+  return value;
+}
+
+function validateCloseout(value, file) {
+  if (value === null) return null;
+  if (!plainObject(value)) throw new CorruptStateError(file, "closeout.json must be an object");
+  if (value.schema_version !== PR_STATE_SCHEMA_VERSION) {
+    throw new CorruptStateError(file, "closeout.json schema_version must be 1");
+  }
+  if (!nonEmptyString(value.status)) throw new CorruptStateError(file, "closeout.json status is required");
+  return value;
+}
+
+function plainObject(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function validTimestamp(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
 function writeSummary(summary) {

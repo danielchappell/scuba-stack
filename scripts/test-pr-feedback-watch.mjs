@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -143,6 +143,16 @@ test("atomic writes ignore interrupted temp files and preserve complete JSON/tex
 
     await appendPrStateJsonl(state, "steward", "push-log.jsonl", { head_before: "a", head_after: "b" });
     assert.equal((await readFile(path.join(state.stateDir, "push-log.jsonl"), "utf8")).trim(), "{\"head_before\":\"a\",\"head_after\":\"b\"}");
+
+    await writePrStateJson(state, "steward", "hardening-rounds/round-1.json", {
+      schema_version: 1,
+      round: 1,
+      status: "open"
+    });
+    assert.equal(
+      JSON.parse(await readFile(path.join(state.stateDir, "hardening-rounds", "round-1.json"), "utf8")).status,
+      "open"
+    );
   });
 });
 
@@ -214,6 +224,9 @@ test("one PR lock serializes watcher, manager, steward, and smoke writers", asyn
       await assertLockBusy(writePrStateJson(state, "steward", "dispositions.json", { schema_version: 1 }, { lockTimeoutMs: 25 }));
       await assertLockBusy(appendPrStateJsonl(state, "steward", "push-log.jsonl", { head_before: "a" }, { lockTimeoutMs: 25 }));
       await assertLockBusy(writePrStateJson(state, "steward", "closeout.json", { schema_version: 1 }, { lockTimeoutMs: 25 }));
+      await assertLockBusy(writePrStateJson(state, "steward", "hardening-rounds/round-1.json", { schema_version: 1 }, { lockTimeoutMs: 25 }));
+      await assertLockBusy(writePrStateJson(state, "steward", "config.json", validConfig(), { lockTimeoutMs: 25 }));
+      await assertLockBusy(writePrStateJson(state, "smoke", "config.json", validConfig(), { lockTimeoutMs: 25 }));
       await assertLockBusy(writePrStateText(state, "smoke", "audit/report.md", "blocked\n", { lockTimeoutMs: 25 }));
     } finally {
       await lock.release();
@@ -269,6 +282,42 @@ test("explicit lock reuse is scoped to the selected PR state", async () => {
   });
 });
 
+test("explicit lock reuse cannot be forged from copied identity fields", async () => {
+  await withTempDir("lock-forgery", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    const watcherLock = await acquirePrStateLock(state, {
+      owner: "watcher",
+      mode: "test",
+      operation: "hold",
+      timeoutMs: 0,
+      staleMs: 30_000
+    });
+
+    try {
+      const forgedLock = {
+        owner: "steward",
+        lockIdentity: watcherLock.lockIdentity,
+        lockPath: watcherLock.lockPath,
+        stateDir: watcherLock.stateDir,
+        released: false
+      };
+
+      await assert.rejects(
+        writePrStateJson(state, "steward", "closeout.json", {
+          schema_version: 1,
+          status: "forged-write"
+        }, { lock: forgedLock }),
+        (error) => error?.code === "lock_not_held" || error?.code === "owner_path_forbidden"
+      );
+      assert.equal(existsSync(path.join(state.stateDir, "closeout.json")), false);
+      const currentLock = JSON.parse(await readFile(path.join(state.stateDir, "pr-feedback.lock"), "utf8"));
+      assert.equal(currentLock.owner, "watcher");
+    } finally {
+      await watcherLock.release();
+    }
+  });
+});
+
 test("explicit lock reuse requires the current live lock instance", async () => {
   await withTempDir("lock-live-identity", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
@@ -304,6 +353,43 @@ test("explicit lock reuse requires the current live lock instance", async () => 
       assert.equal(currentLock.operation, "current");
     } finally {
       await stewardLock.release();
+    }
+  });
+});
+
+test("release stays held when matching lock removal is blocked", async () => {
+  await withTempDir("release-blocked", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    const lock = await acquirePrStateLock(state, {
+      owner: "watcher",
+      mode: "test",
+      operation: "release-blocked",
+      timeoutMs: 0,
+      staleMs: 30_000
+    });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    const claimPath = lockRemovalClaimPath(lockPath, lock.lockIdentity);
+
+    await writeFile(claimPath, JSON.stringify({
+      schema_version: 1,
+      kind: "pr-feedback-lock-removal-claim",
+      identity_key: lockRemovalIdentityKey(lock.lockIdentity),
+      claim_id: "cross-host-remover",
+      pid: 12345,
+      hostname: "other-host",
+      claimed_at: new Date().toISOString()
+    }, null, 2) + "\n");
+
+    try {
+      await assert.rejects(
+        lock.release(),
+        (error) => error?.code === "lock_release_blocked" && error?.exitCode === 75
+      );
+      assert.equal(lock.released, false);
+      assert.equal(existsSync(lockPath), true);
+    } finally {
+      await rm(claimPath, { force: true });
+      await lock.release();
     }
   });
 });
@@ -432,6 +518,117 @@ test("stale release never opens an acquisition gap over a live replacement lock"
   });
 });
 
+test("expired same-host live-pid locks recover after their lease", async () => {
+  await withTempDir("same-host-pid-reuse-lock", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    await writeFile(lockPath, JSON.stringify({
+      schema_version: 1,
+      lock_id: "expired-live-pid-lock",
+      owner: "watcher",
+      pid: process.pid,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "pid-reuse"
+    }, null, 2) + "\n");
+
+    const status = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+
+    assert.equal(status.status, 0, status.stderr);
+    const summary = parseStdoutJson(status);
+    assert.equal(summary.status, "status_checked");
+    assert.equal(existsSync(lockPath), false);
+  });
+});
+
+test("future lock and claim timestamps cannot wedge recovery", async () => {
+  await withTempDir("future-lock-claim-times", async (tmp) => {
+    const futureLockState = resolvePrState({ stateDir: path.join(tmp, "future-lock") });
+    await mkdir(futureLockState.stateDir, { recursive: true });
+    const futureLockPath = path.join(futureLockState.stateDir, "pr-feedback.lock");
+    await writeFile(futureLockPath, JSON.stringify({
+      schema_version: 1,
+      lock_id: "future-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2999-01-01T00:00:00.000Z",
+      mode: "test",
+      operation: "future"
+    }, null, 2) + "\n");
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(futureLockPath, staleTime, staleTime);
+
+    const recoveredFutureLock = runWatcher([
+      "status",
+      "--state-dir",
+      futureLockState.stateDir,
+      "--lock-stale-ms",
+      "1",
+      "--lock-timeout-ms",
+      "25"
+    ]);
+    assert.equal(recoveredFutureLock.status, 0, recoveredFutureLock.stderr);
+    assert.equal(existsSync(futureLockPath), false);
+
+    const futureMtimeState = resolvePrState({ stateDir: path.join(tmp, "future-mtime") });
+    await mkdir(futureMtimeState.stateDir, { recursive: true });
+    const futureMtimeLock = path.join(futureMtimeState.stateDir, "pr-feedback.lock");
+    await writeFile(futureMtimeLock, "{}\n");
+    const futureTime = new Date("2999-01-01T00:00:00.000Z");
+    await utimes(futureMtimeLock, futureTime, futureTime);
+
+    const recoveredFutureMtime = runWatcher([
+      "status",
+      "--state-dir",
+      futureMtimeState.stateDir,
+      "--lock-stale-ms",
+      "1",
+      "--lock-timeout-ms",
+      "25"
+    ]);
+    assert.equal(recoveredFutureMtime.status, 0, recoveredFutureMtime.stderr);
+    assert.equal(existsSync(futureMtimeLock), false);
+
+    const futureClaimState = resolvePrState({ stateDir: path.join(tmp, "future-claim") });
+    await mkdir(futureClaimState.stateDir, { recursive: true });
+    const lockPath = path.join(futureClaimState.stateDir, "pr-feedback.lock");
+    const lockBody = {
+      schema_version: 1,
+      lock_id: "stale-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    };
+    const lockRaw = JSON.stringify(lockBody, null, 2) + "\n";
+    await writeFile(lockPath, lockRaw);
+    const claimPath = lockRemovalClaimPath(lockPath, lockIdentityFromLock(lockBody, lockRaw));
+    await writeFile(claimPath, "{ invalid claim\n");
+    await utimes(claimPath, futureTime, futureTime);
+
+    const recoveredFutureClaim = runWatcher([
+      "status",
+      "--state-dir",
+      futureClaimState.stateDir,
+      "--lock-stale-ms",
+      "1",
+      "--lock-timeout-ms",
+      "25"
+    ]);
+    assert.equal(recoveredFutureClaim.status, 0, recoveredFutureClaim.stderr);
+    assert.equal(existsSync(lockPath), false);
+    assert.deepEqual(await removalClaimFiles(futureClaimState.stateDir), []);
+  });
+});
+
 test("status records stale lock breaks durably", async () => {
   await withTempDir("stale-status", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
@@ -534,12 +731,21 @@ test("stale removal claims are crash recoverable", async () => {
       let lockReads = 0;
       const lockPath = process.env.SCUBA_STALE_CLAIM_LOCK;
 
-      export async function readFile(file, ...args) {
-        if (String(file) === lockPath) {
-          lockReads += 1;
-          if (lockReads === 2) process.exit(99);
-        }
-        return real.readFile(file, ...args);
+      export async function open(file, flags, mode) {
+        const handle = await real.open(file, flags, mode);
+        if (String(file) !== lockPath) return handle;
+        return new Proxy(handle, {
+          get(target, prop, receiver) {
+            if (prop === "readFile") {
+              return async (...args) => {
+                lockReads += 1;
+                if (lockReads === 2) process.exit(99);
+                return target.readFile(...args);
+              };
+            }
+            return Reflect.get(target, prop, receiver);
+          }
+        });
       }
     `));
     await writeFile(script, `
@@ -743,13 +949,24 @@ test("stale lock break does not delete a fresh replacement lock", async () => {
       let raced = false;
       const lockPath = process.env.SCUBA_STALE_RACE_LOCK;
 
-      export async function readFile(file, ...args) {
-        const data = await real.readFile(file, ...args);
-        if (!raced && String(file) === lockPath) {
-          raced = true;
-          await real.writeFile(lockPath, process.env.SCUBA_STALE_RACE_REPLACEMENT);
-        }
-        return data;
+      export async function open(file, flags, mode) {
+        const handle = await real.open(file, flags, mode);
+        if (String(file) !== lockPath) return handle;
+        return new Proxy(handle, {
+          get(target, prop, receiver) {
+            if (prop === "readFile") {
+              return async (...args) => {
+                const data = await target.readFile(...args);
+                if (!raced) {
+                  raced = true;
+                  await real.writeFile(lockPath, process.env.SCUBA_STALE_RACE_REPLACEMENT);
+                }
+                return data;
+              };
+            }
+            return Reflect.get(target, prop, receiver);
+          }
+        });
       }
     `));
     await writeFile(script, `
@@ -839,13 +1056,24 @@ test("stale lock break never opens an acquisition gap over a live replacement lo
         }
       }
 
-      export async function readFile(file, ...args) {
-        const data = await real.readFile(file, ...args);
-        if (!installedReplacement && String(file) === lockPath) {
-          installedReplacement = true;
-          await real.writeFile(lockPath, process.env.SCUBA_STALE_RESTORE_RACE_REPLACEMENT);
-        }
-        return data;
+      export async function open(file, flags, mode) {
+        const handle = await real.open(file, flags, mode);
+        if (String(file) !== lockPath) return handle;
+        return new Proxy(handle, {
+          get(target, prop, receiver) {
+            if (prop === "readFile") {
+              return async (...args) => {
+                const data = await target.readFile(...args);
+                if (!installedReplacement) {
+                  installedReplacement = true;
+                  await real.writeFile(lockPath, process.env.SCUBA_STALE_RESTORE_RACE_REPLACEMENT);
+                }
+                return data;
+              };
+            }
+            return Reflect.get(target, prop, receiver);
+          }
+        });
       }
 
       export async function rename(from, to) {
@@ -930,6 +1158,123 @@ test("stale lock break never opens an acquisition gap over a live replacement lo
   });
 });
 
+test("authoritative state, lock, and claim reads reject hardlinked files", async () => {
+  await withTempDir("hardlinked-reads", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    const outside = path.join(tmp, "outside");
+    await mkdir(state.stateDir, { recursive: true });
+    await mkdir(outside, { recursive: true });
+
+    await writeFile(path.join(outside, "events.jsonl"), JSON.stringify(eventRevision("outside", "outside:v1", {
+      token: "S02_HARDLINK_SECRET"
+    })) + "\n");
+    await link(path.join(outside, "events.jsonl"), path.join(state.stateDir, "events.jsonl"));
+    const replay = runWatcher(["replay", "--state-dir", state.stateDir]);
+    assert.equal(replay.status, 20);
+    assert.equal(parseStdoutJson(replay).reason, "invalid_state_path");
+    assert.ok(!replay.stdout.includes("S02_HARDLINK_SECRET"));
+    await rm(path.join(state.stateDir, "events.jsonl"), { force: true });
+
+    await writeFile(path.join(outside, "pr-feedback.lock"), JSON.stringify({
+      schema_version: 1,
+      lock_id: "outside-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "S02_LOCK_SECRET"
+    }, null, 2) + "\n");
+    await link(path.join(outside, "pr-feedback.lock"), path.join(state.stateDir, "pr-feedback.lock"));
+    const lockStatus = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+    assert.equal(lockStatus.status, 20);
+    assert.equal(parseStdoutJson(lockStatus).reason, "invalid_state_path");
+    assert.ok(!lockStatus.stdout.includes("S02_LOCK_SECRET"));
+    await rm(path.join(state.stateDir, "pr-feedback.lock"), { force: true });
+
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    const lockBody = {
+      schema_version: 1,
+      lock_id: "stale-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    };
+    const lockRaw = JSON.stringify(lockBody, null, 2) + "\n";
+    await writeFile(lockPath, lockRaw);
+    const claimPath = lockRemovalClaimPath(lockPath, lockIdentityFromLock(lockBody, lockRaw));
+    await writeFile(path.join(outside, "claim"), JSON.stringify({
+      schema_version: 1,
+      kind: "pr-feedback-lock-removal-claim",
+      identity_key: lockRemovalIdentityKey(lockIdentityFromLock(lockBody, lockRaw)),
+      claim_id: "hardlinked-claim",
+      pid: 12345,
+      hostname: "other-host",
+      claimed_at: new Date().toISOString()
+    }, null, 2) + "\n");
+    await link(path.join(outside, "claim"), claimPath);
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(claimPath, staleTime, staleTime);
+
+    const recovered = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(existsSync(lockPath), false);
+    assert.deepEqual(await removalClaimFiles(state.stateDir), []);
+  });
+});
+
+test("state reads are bound to the validated file, not a later symlink swap", async () => {
+  await withTempDir("read-race", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    const outside = path.join(tmp, "outside");
+    await mkdir(state.stateDir, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    const statusPath = path.join(state.stateDir, "watcher-status.json");
+    const outsideStatus = path.join(outside, "watcher-status.json");
+    await writeFile(statusPath, JSON.stringify(watcherStatusFixture("initial")) + "\n");
+    await writeFile(outsideStatus, JSON.stringify(watcherStatusFixture("S02_RACE_SECRET")) + "\n");
+    const statusReal = await realpath(statusPath);
+
+    const loader = path.join(tmp, "read-race-loader.mjs");
+    await writeFile(loader, fsPromisesMockLoader(`
+      import * as real from "node:fs/promises";
+      export * from "node:fs/promises";
+
+      let swapped = false;
+      const statusPath = process.env.SCUBA_READ_RACE_STATUS;
+      const statusReal = process.env.SCUBA_READ_RACE_STATUS_REAL;
+      const outsideStatus = process.env.SCUBA_READ_RACE_OUTSIDE_STATUS;
+
+      export async function readFile(file, ...args) {
+        if (!swapped && (String(file) === statusPath || String(file) === statusReal)) {
+          swapped = true;
+          await real.rm(statusPath, { force: true });
+          await real.symlink(outsideStatus, statusPath);
+        }
+        return real.readFile(file, ...args);
+      }
+    `));
+
+    const status = runNode(["--loader", loader, WATCHER, "status", "--state-dir", state.stateDir], {
+      env: {
+        SCUBA_READ_RACE_STATUS: statusPath,
+        SCUBA_READ_RACE_STATUS_REAL: statusReal,
+        SCUBA_READ_RACE_OUTSIDE_STATUS: outsideStatus
+      }
+    });
+
+    assert.equal(status.status, 0, status.stderr);
+    const summary = parseStdoutJson(status);
+    assert.equal(summary.status, "initial");
+    assert.ok(!status.stdout.includes("S02_RACE_SECRET"));
+  });
+});
+
 test("state reads and lock handling reject symlink escapes", async () => {
   await withTempDir("read-symlink", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
@@ -998,11 +1343,114 @@ test("owner allowlists reject cross-owner and escaping writes", async () => {
   await withTempDir("owners", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
 
+    await writePrStateJson(state, "steward", "config.json", validConfig());
+    await writePrStateJson(state, "smoke", "config.json", validConfig());
+    await writePrStateJson(state, "steward", "hardening-rounds/round-2.json", {
+      schema_version: 1,
+      round: 2
+    });
+
     await assertOwnerRejected(writePrStateJson(state, "watcher", "closeout.json", { schema_version: 1 }));
     await assertOwnerRejected(writePrStateJson(state, "steward", "watcher-status.json", { schema_version: 1 }));
-    await assertOwnerRejected(writePrStateJson(state, "smoke", "config.json", validConfig()));
     await assertOwnerRejected(writePrStateJson(state, "manager", "dispositions.json", { schema_version: 1 }));
     await assertOwnerRejected(writePrStateJson(state, "watcher", "../escape.json", { schema_version: 1 }));
+  });
+});
+
+test("event replay treats prototype keys as data and validates revisions", async () => {
+  await withTempDir("event-prototype-schema", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    const eventLog = path.join(state.stateDir, "events.jsonl");
+
+    await writeFile(eventLog, [
+      "{\"schema_version\":1,\"event_id\":\"__proto__\",\"event_revision_id\":\"proto:v1\",\"observed_at\":\"2026-06-28T00:00:00.000Z\",\"payload\":{}}",
+      ""
+    ].join("\n"));
+    const replay = runWatcher(["replay", "--state-dir", state.stateDir]);
+    assert.equal(replay.status, 0, replay.stderr);
+    const index = JSON.parse(await readFile(path.join(state.stateDir, "event-index.json"), "utf8"));
+    assert.equal(Object.prototype.hasOwnProperty.call(index.latest_by_event_id, "__proto__"), true);
+    assert.equal(index.latest_by_event_id["__proto__"], "proto:v1");
+
+    await writeFile(eventLog, [
+      "{\"schema_version\":1,\"event_id\":\"thread:1\",\"event_revision_id\":\"thread:1:v1\",\"observed_at\":\"2026-06-28T00:00:00.000Z\",\"payload\":{\"__proto__\":{\"state\":\"open\"}}}",
+      "{\"schema_version\":1,\"event_id\":\"thread:1\",\"event_revision_id\":\"thread:1:v1\",\"observed_at\":\"2026-06-28T00:00:00.000Z\",\"payload\":{\"__proto__\":{\"state\":\"resolved\"}}}",
+      ""
+    ].join("\n"));
+    const conflict = runWatcher(["replay", "--state-dir", state.stateDir]);
+    assert.equal(conflict.status, 20);
+    assert.equal(parseStdoutJson(conflict).reason, "corrupt_state");
+
+    await writeFile(eventLog, "{\"event_id\":\"thread:2\",\"event_revision_id\":\"thread:2:v1\"}\n");
+    const invalidSchema = runWatcher(["replay", "--state-dir", state.stateDir]);
+    assert.equal(invalidSchema.status, 20);
+    assert.equal(parseStdoutJson(invalidSchema).reason, "corrupt_state");
+  });
+});
+
+test("status and config JSON must be schema-valid before becoming authoritative", async () => {
+  await withTempDir("status-config-schema", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    await writeFile(path.join(state.stateDir, "watcher-status.json"), JSON.stringify({
+      status: "external_approved"
+    }) + "\n");
+    await writeFile(path.join(state.stateDir, "closeout.json"), "[]\n");
+
+    const invalidStatus = runWatcher(["status", "--state-dir", state.stateDir]);
+    assert.equal(invalidStatus.status, 20);
+    const invalidStatusSummary = parseStdoutJson(invalidStatus);
+    assert.equal(invalidStatusSummary.reason, "corrupt_state");
+    assert.equal(invalidStatusSummary.file, path.join(state.stateDir, "watcher-status.json"));
+
+    const reviewerState = resolvePrState({ stateDir: path.join(tmp, "bad-reviewer") });
+    await mkdir(reviewerState.stateDir, { recursive: true });
+    await writeFile(path.join(reviewerState.stateDir, "config.json"), JSON.stringify({
+      ...validConfig(),
+      external_reviewer: {}
+    }, null, 2) + "\n");
+    const invalidReviewer = runWatcher(["status", "--state-dir", reviewerState.stateDir]);
+    assert.equal(invalidReviewer.status, 20);
+    assert.equal(parseStdoutJson(invalidReviewer).reason, "configuration_invalid");
+
+    const repoState = resolvePrState({ stateDir: path.join(tmp, "bad-repo") });
+    await mkdir(repoState.stateDir, { recursive: true });
+    await writeFile(path.join(repoState.stateDir, "config.json"), JSON.stringify({
+      ...validConfig(),
+      repo: { owner: "bad/owner", name: "repo" }
+    }, null, 2) + "\n");
+    const invalidRepo = runWatcher(["status", "--state-dir", repoState.stateDir]);
+    assert.equal(invalidRepo.status, 20);
+    assert.equal(parseStdoutJson(invalidRepo).reason, "configuration_invalid");
+  });
+});
+
+test("CLI validates numeric inputs and selectors before runtime state operations", async () => {
+  await withTempDir("cli-validation", async (tmp) => {
+    const roundedPr = runWatcher(["status", "--team", "alpha", "--pr", "9007199254740993"], { cwd: tmp });
+    assert.equal(roundedPr.status, 30);
+    assert.equal(parseStdoutJson(roundedPr).reason, "usage");
+
+    const hugeLock = runWatcher(["status", "--state-dir", path.join(tmp, "pr-state"), "--lock-stale-ms", "9007199254740993"]);
+    assert.equal(hugeLock.status, 30);
+    const hugeLockSummary = parseStdoutJson(hugeLock);
+    assert.equal(hugeLockSummary.mode, "status");
+    assert.equal(hugeLockSummary.reason, "usage");
+
+    const mixedSelector = runWatcher(["snapshot", "--state-dir", path.join(tmp, "pr-state"), "--team", "alpha", "--pr", "1"]);
+    assert.equal(mixedSelector.status, 30);
+    assert.equal(parseStdoutJson(mixedSelector).reason, "usage");
+
+    const badPollSelector = runWatcher(["poll", "--team", "bad/team", "--pr", "0"], { cwd: tmp });
+    assert.equal(badPollSelector.status, 30);
+    assert.equal(parseStdoutJson(badPollSelector).reason, "usage");
+
+    const missingLockValue = runWatcher(["status", "--lock-timeout-ms"]);
+    assert.equal(missingLockValue.status, 30);
+    const missingLockValueSummary = parseStdoutJson(missingLockValue);
+    assert.equal(missingLockValueSummary.mode, "status");
+    assert.equal(missingLockValueSummary.reason, "usage");
   });
 });
 
@@ -1057,6 +1505,21 @@ function eventRevision(eventId, revisionId, extra = {}) {
     event_revision_id: revisionId,
     observed_at: "2026-06-28T00:00:00.000Z",
     payload: extra
+  };
+}
+
+function watcherStatusFixture(status) {
+  return {
+    schema_version: 1,
+    mode: "status",
+    status,
+    reason: null,
+    started_at: "2026-06-28T00:00:00.000Z",
+    completed_at: "2026-06-28T00:00:01.000Z",
+    last_successful_snapshot_id: null,
+    last_error: null,
+    stale_lock_break: null,
+    exit_code: 0
   };
 }
 
