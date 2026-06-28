@@ -6,7 +6,7 @@ Scuba Stack turns one user-facing agent into a small, disciplined organization: 
 
 ## Status
 
-Experimental. The Claude target preserves existing install behavior while adding the new lifecycle gates. Both targets install shared Scuba tools under their target homes. The Codex target installs skills, custom agents, an explicit `$scuba` manual entrypoint skill, and a Codex-native hook adapter. Codex hook status after install is **installed, pending trust** until the user reviews/trusts it with `/hooks`; treat it as operational only after trust and a live smoke.
+Experimental. The Claude target preserves existing install behavior while adding the new lifecycle gates. Both targets install shared Scuba tools under their target homes. The Codex target installs skills, custom agents, an explicit `$scuba` manual entrypoint skill, and a Codex-native hook adapter. Codex hook status after install is **installed configuration**; it remains **pending trust** until the user reviews/trusts it with `/hooks`, and becomes operational only after trust plus a live denied tool call proves enforcement.
 
 ## Quickstart
 
@@ -81,4 +81,4 @@ bash hooks/test-codex-scuba-guard.sh
 
 When adding a new platform, add a target manifest, write any target adapters under `targets/<target>/`, extend the renderer only where necessary, and keep the core files free of platform names.
 
-For Codex Desktop behavior audits, use `node scripts/audit-codex-jsonl.mjs <root-thread-id>` to reconstruct the root thread and descendant subagent sessions from `~/.codex/sessions` and `~/.codex/archived_sessions`.
+For Codex Desktop behavior audits, use `node scripts/audit-codex-jsonl.mjs <root-thread-id>` to reconstruct the root thread and descendant subagent sessions from `~/.codex/sessions` and `~/.codex/archived_sessions`. Add `--acceptance` when the audit is a gate; it fails nonzero for missing root JSONL, parse errors, or unreconciled task starts while keeping the report bounded to operational metadata.

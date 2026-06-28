@@ -40,7 +40,7 @@ Installs to:
 - `~/.codex/hooks.json` hook entry, when `jq` is available
 - `~/.codex/.scuba-manifest`
 
-Codex hook enforcement installs as **installed, pending trust**. After installing, restart Codex and use `/hooks` to review and trust the Scuba command hook. Treat enforcement as operational only after the hook is trusted and a live smoke confirms it fires in the current Codex environment.
+Codex hook enforcement installs as **installed configuration, pending trust**. After installing, restart Codex and use `/hooks` to review and trust the Scuba command hook. Treat enforcement as operational only after the hook is trusted and a live denied tool call confirms it fires in the current Codex environment.
 
 Scuba writes Codex hook configuration only to `~/.codex/hooks.json`, not `~/.codex/config.toml`.
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 const USAGE = `Usage:
-  node scripts/audit-codex-jsonl.mjs <root-thread-id> [--codex-home <path>] [--out <path>]
+  node scripts/audit-codex-jsonl.mjs <root-thread-id> [--codex-home <path>] [--out <path>] [--acceptance] [--require-subagents] [--require-subagent-metadata]
   node scripts/audit-codex-jsonl.mjs --list-recent [--codex-home <path>]
 
 Audits Codex Desktop/CLI JSONL session logs by building a parent/subagent tree.
-The default report uses operational metadata, not raw transcript or reasoning text.`;
+The default report uses operational metadata, not raw transcript or reasoning text.
+Acceptance mode writes the same report, then exits nonzero for blocking proof gaps.`;
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -18,9 +19,11 @@ if (args.help) {
 }
 
 const codexHome = args.codexHome ?? path.join(os.homedir(), ".codex");
-const index = await readSessionIndex(path.join(codexHome, "session_index.jsonl"));
+const sessionIndex = await readSessionIndex(path.join(codexHome, "session_index.jsonl"));
+const index = sessionIndex.entries;
 
 if (args.listRecent) {
+  failIfSessionIndexUnavailable(sessionIndex);
   const recent = [...index.values()]
     .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")))
     .slice(0, 30);
@@ -69,26 +72,47 @@ for (const children of childrenByParent.values()) {
 }
 
 const selected = collectDescendants(args.rootThreadId, byId, childrenByParent);
+const acceptanceFailures = args.acceptance ? collectAcceptanceFailures({
+  sessions: selected,
+  rootThreadId: args.rootThreadId,
+  byId,
+  indexInfo: sessionIndex,
+  requireSubagents: args.requireSubagents,
+  requireSubagentMetadata: args.requireSubagentMetadata
+}) : undefined;
 const report = renderReport({
   rootThreadId: args.rootThreadId,
   codexHome,
+  indexInfo: sessionIndex,
   sessions: selected,
   byId,
-  childrenByParent
+  childrenByParent,
+  acceptanceFailures
 });
 
 if (args.out) {
-  await writeFile(args.out, report);
+  await writeFileAtomically(args.out, report);
 } else {
   process.stdout.write(report);
 }
 
+if (args.acceptance) {
+  if (acceptanceFailures.length > 0) {
+    console.error("Codex JSONL audit acceptance failed:");
+    for (const failure of acceptanceFailures) console.error(`- ${failure}`);
+    process.exit(2);
+  }
+}
+
 function parseArgs(argv) {
   const parsed = {
+    acceptance: false,
     codexHome: process.env.CODEX_HOME || undefined,
     help: false,
     listRecent: false,
     out: undefined,
+    requireSubagents: false,
+    requireSubagentMetadata: false,
     rootThreadId: undefined
   };
 
@@ -96,8 +120,14 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       parsed.help = true;
+    } else if (arg === "--acceptance") {
+      parsed.acceptance = true;
     } else if (arg === "--list-recent") {
       parsed.listRecent = true;
+    } else if (arg === "--require-subagents") {
+      parsed.requireSubagents = true;
+    } else if (arg === "--require-subagent-metadata") {
+      parsed.requireSubagentMetadata = true;
     } else if (arg === "--codex-home") {
       parsed.codexHome = requireValue(argv, ++i, arg);
     } else if (arg === "--out") {
@@ -123,25 +153,35 @@ function requireValue(argv, index, option) {
 }
 
 async function readSessionIndex(file) {
-  const map = new Map();
+  const info = {
+    file,
+    entries: new Map(),
+    missing: false,
+    parseErrors: []
+  };
   let text = "";
   try {
     text = await readFile(file, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") return map;
+    if (error?.code === "ENOENT") {
+      info.missing = true;
+      return info;
+    }
     throw error;
   }
 
+  let lineNumber = 0;
   for (const line of text.split(/\r?\n/)) {
+    lineNumber += 1;
     if (!line.trim()) continue;
     try {
       const item = JSON.parse(line);
-      if (item?.id) map.set(item.id, item);
-    } catch {
-      // Ignore corrupt index lines; individual session files remain authoritative.
+      if (item?.id) info.entries.set(item.id, item);
+    } catch (error) {
+      info.parseErrors.push({ line: lineNumber, message: error.message });
     }
   }
-  return map;
+  return info;
 }
 
 async function listJsonlFiles(dir) {
@@ -208,7 +248,6 @@ async function parseSessionFile(file) {
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     summary.lineCount += 1;
-    collectPathEvidence(summary, line);
 
     let record;
     try {
@@ -261,6 +300,11 @@ function applySessionMeta(summary, payload = {}) {
   } else if (payload.source?.subagent) {
     summary.source ||= "subagent";
   }
+
+  collectPathEvidence(summary, payload.cwd);
+  collectPathEvidence(summary, payload.agent_path);
+  collectPathEvidence(summary, payload.agentPath);
+  collectPathEvidence(summary, payload.source?.subagent?.thread_spawn?.agent_path);
 }
 
 function applyTurnContext(summary, payload = {}) {
@@ -286,19 +330,35 @@ function applyResponseItem(summary, payload = {}) {
 
   if (type === "function_call") {
     increment(summary.functionCalls, payload.name ?? "unknown");
+    collectPathEvidence(summary, payload.arguments);
   } else if (type === "custom_tool_call") {
     increment(summary.customToolCalls, payload.name ?? payload.call_id ?? "custom_tool_call");
+    collectPathEvidence(summary, payload.input);
   }
 }
 
-function collectPathEvidence(summary, line) {
-  for (const match of line.matchAll(/(?:\/[^\s"'`\\]+)?\.scuba\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
+function collectPathEvidence(summary, value) {
+  if (typeof value === "string") {
+    collectPathEvidenceFromString(summary, value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectPathEvidence(summary, item);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) collectPathEvidence(summary, item);
+  }
+}
+
+function collectPathEvidenceFromString(summary, text) {
+  for (const match of text.matchAll(/(?:\/[^\s"'`\\]+)?\.scuba\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
     summary.scubaPaths.add(cleanPath(match[0]));
   }
-  for (const match of line.matchAll(/(?:\/[^\s"'`\\]+)?\.codex\/worktrees\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
+  for (const match of text.matchAll(/(?:\/[^\s"'`\\]+)?\.codex\/worktrees\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
     summary.worktreePaths.add(cleanPath(match[0]));
   }
-  for (const match of line.matchAll(/\.agents\/skills\/([A-Za-z0-9-]+)\/SKILL\.md/g)) {
+  for (const match of text.matchAll(/\.agents\/skills\/([A-Za-z0-9-]+)\/SKILL\.md/g)) {
     summary.skillReferences.add(match[1]);
   }
 }
@@ -322,7 +382,7 @@ function collectDescendants(rootId, byId, childrenByParent) {
   return [...selected.values()];
 }
 
-function renderReport({ rootThreadId, codexHome, sessions, byId, childrenByParent }) {
+function renderReport({ rootThreadId, codexHome, indexInfo, sessions, byId, childrenByParent, acceptanceFailures }) {
   const root = byId.get(rootThreadId);
   const lines = [];
   lines.push("# Codex JSONL Audit");
@@ -370,7 +430,7 @@ function renderReport({ rootThreadId, codexHome, sessions, byId, childrenByParen
   }
   lines.push("");
 
-  const gaps = collectGaps(sessions, rootThreadId, byId);
+  const gaps = collectGaps(sessions, rootThreadId, byId, indexInfo);
   lines.push("## Audit Gaps");
   lines.push("");
   if (gaps.length === 0) {
@@ -379,6 +439,17 @@ function renderReport({ rootThreadId, codexHome, sessions, byId, childrenByParen
     for (const gap of gaps) lines.push(`- ${gap}`);
   }
   lines.push("");
+
+  if (acceptanceFailures) {
+    lines.push("## Acceptance Failures");
+    lines.push("");
+    if (acceptanceFailures.length === 0) {
+      lines.push("- None.");
+    } else {
+      for (const failure of acceptanceFailures) lines.push(`- ${failure}`);
+    }
+    lines.push("");
+  }
 
   lines.push("## `.scuba` Evidence");
   lines.push("");
@@ -434,8 +505,9 @@ function renderTree(lines, session, childrenByParent, depth) {
   }
 }
 
-function collectGaps(sessions, rootThreadId, byId) {
+function collectGaps(sessions, rootThreadId, byId, indexInfo) {
   const gaps = [];
+  gaps.push(...collectSessionIndexParseFailures(indexInfo));
   if (!byId.has(rootThreadId)) {
     gaps.push(`Missing root session JSONL for \`${rootThreadId}\`.`);
   }
@@ -443,10 +515,10 @@ function collectGaps(sessions, rootThreadId, byId) {
     if (session.parseErrors > 0) {
       gaps.push(`${shortId(session.id)} has ${session.parseErrors} JSON parse error(s).`);
     }
-    if (session.threadSource === "subagent" && !session.parentId) {
+    if (isSubagentSession(session, rootThreadId) && !session.parentId) {
       gaps.push(`${shortId(session.id)} is a subagent session with no parent id.`);
     }
-    if (session.threadSource === "subagent" && !session.agentNickname && !session.agentRole && !session.agentPath) {
+    if (isSubagentSession(session, rootThreadId) && !session.agentNickname && !session.agentRole && !session.agentPath) {
       gaps.push(`${shortId(session.id)} is a subagent session without nickname, role, or agent path metadata.`);
     }
     if (session.taskStarted > session.taskComplete + session.taskAborted) {
@@ -454,6 +526,78 @@ function collectGaps(sessions, rootThreadId, byId) {
     }
   }
   return gaps;
+}
+
+function collectAcceptanceFailures({ sessions, rootThreadId, byId, indexInfo, requireSubagents, requireSubagentMetadata }) {
+  const failures = [];
+  failures.push(...collectSessionIndexParseFailures(indexInfo));
+  if (!byId.has(rootThreadId)) {
+    failures.push(`Missing root session JSONL for \`${rootThreadId}\`.`);
+  }
+
+  const subagents = sessions.filter((session) => isSubagentSession(session, rootThreadId));
+  if (requireSubagents && subagents.length === 0) {
+    failures.push("No subagent session metadata was found for the requested proof claim.");
+  }
+
+  for (const session of sessions) {
+    if (session.parseErrors > 0) {
+      failures.push(`${shortId(session.id)} has ${session.parseErrors} JSON parse error(s).`);
+    }
+    if (session.taskStarted > session.taskComplete + session.taskAborted) {
+      failures.push(`${shortId(session.id)} has ${session.taskStarted} task start(s) but only ${session.taskComplete} complete and ${session.taskAborted} aborted event(s).`);
+    }
+    if (requireSubagentMetadata && isSubagentSession(session, rootThreadId)) {
+      if (!session.parentId) {
+        failures.push(`${shortId(session.id)} is a subagent session with no parent id.`);
+      }
+      if (!session.agentNickname && !session.agentRole && !session.agentPath) {
+        failures.push(`${shortId(session.id)} is a subagent session without nickname, role, or agent path metadata.`);
+      }
+    }
+  }
+
+  return failures;
+}
+
+function collectSessionIndexParseFailures(indexInfo) {
+  return indexInfo.parseErrors.map((error) =>
+    `${path.basename(indexInfo.file)} line ${error.line} has a JSON parse error.`
+  );
+}
+
+function failIfSessionIndexUnavailable(indexInfo) {
+  if (indexInfo.missing) {
+    fail(`Codex session index not found: ${indexInfo.file}`);
+  }
+  const parseFailures = collectSessionIndexParseFailures(indexInfo);
+  if (parseFailures.length > 0) {
+    fail([
+      `Codex session index is not parseable: ${indexInfo.file}`,
+      ...parseFailures
+    ].join("\n"));
+  }
+}
+
+async function writeFileAtomically(file, content) {
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  const temp = path.join(dir, `.${base}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+  let renamed = false;
+  try {
+    await writeFile(temp, content, { flag: "wx" });
+    await rename(temp, file);
+    renamed = true;
+  } finally {
+    if (!renamed) {
+      await rm(temp, { force: true }).catch(() => {});
+    }
+  }
+}
+
+function isSubagentSession(session, rootThreadId) {
+  return session.id !== rootThreadId &&
+    (session.threadSource === "subagent" || session.source === "subagent" || Boolean(session.parentId));
 }
 
 function sessionLabel(session) {

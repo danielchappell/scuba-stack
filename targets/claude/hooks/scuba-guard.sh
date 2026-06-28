@@ -198,6 +198,93 @@ in_temp() {
   return 1
 }
 
+normalize_shell_words() {
+  printf '%s' "$1" | tr '\n' ' ' | sed -E "s/\\\\(.)/\\1/g; s/[\"']//g; s/([;&|()])/ \\1 /g"
+}
+
+is_shell_separator() {
+  case "$1" in
+    ";"|"&"|"|"|"("|")") return 0 ;;
+  esac
+  return 1
+}
+
+is_draft_flag() {
+  local token="$1" value
+  case "$token" in
+    --draft|-d|-d=*) return 0 ;;
+    --draft=*)
+      value="${token#--draft=}"
+      case "$value" in
+        false|False|FALSE|0|no|No|NO) return 1 ;;
+        *) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
+is_gh_executable() {
+  local token="$1" base
+  base="${token##*/}"
+  [ "$base" = "gh" ]
+}
+
+gh_command_index_after_globals() {
+  local j="$1" token
+  while [ "$j" -lt "${#words[@]}" ]; do
+    token="${words[$j]}"
+    is_shell_separator "$token" && return 1
+    case "$token" in
+      -R|--repo|--hostname|--config)
+        j=$((j + 2))
+        ;;
+      --repo=*|--hostname=*|--config=*|--*)
+        j=$((j + 1))
+        ;;
+      -*)
+        j=$((j + 1))
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  [ "$j" -lt "${#words[@]}" ] || return 1
+  printf '%s' "$j"
+}
+
+has_gh_draft_pr_create() {
+  local normalized token sub i j
+  local -a words
+  normalized="$(normalize_shell_words "$1")"
+  read -r -a words <<< "$normalized"
+
+  for ((i = 0; i < ${#words[@]}; i += 1)); do
+    is_gh_executable "${words[$i]}" || continue
+    if ! j="$(gh_command_index_after_globals "$((i + 1))")"; then
+      continue
+    fi
+
+    [ "$j" -lt "${#words[@]}" ] || continue
+    [ "${words[$j]}" = "pr" ] || continue
+    j=$((j + 1))
+    [ "$j" -lt "${#words[@]}" ] || continue
+    sub="${words[$j]}"
+    [ "$sub" = "create" ] || [ "$sub" = "new" ] || continue
+    j=$((j + 1))
+
+    while [ "$j" -lt "${#words[@]}" ]; do
+      token="${words[$j]}"
+      is_shell_separator "$token" && break
+      is_draft_flag "$token" && return 0
+      j=$((j + 1))
+    done
+  done
+
+  return 1
+}
+
 # True if a doc/operator path the lead may legitimately edit: any `.md` file,
 # any `.scuba` component (handled by the caller), or a named operator doc.
 is_doc_path() {
@@ -270,10 +357,8 @@ check_bash() {
 
   # Draft-PR block (Decision 3): `gh pr create` OR the `gh pr new` alias, with
   # `--draft` or `-d`.
-  if printf '%s' "$cmd" | grep -Eq 'gh[[:space:]]+pr[[:space:]]+(create|new)\b'; then
-    if printf '%s' "$cmd" | grep -Eq '(--draft|(^|[[:space:]])-d([[:space:]]|=|$))'; then
-      deny "Draft PRs are not reviewed by the external reviewer; open non-draft (per the never-draft rule in team-manager)."
-    fi
+  if has_gh_draft_pr_create "$cmd"; then
+    deny "Draft PRs are not reviewed by the external reviewer; open non-draft (per the never-draft rule in team-manager)."
   fi
 
   # Best-effort primary-tree mutation: a destructive git subcommand whose
