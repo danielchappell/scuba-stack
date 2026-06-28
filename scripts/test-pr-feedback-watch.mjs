@@ -442,6 +442,106 @@ test("stale lock break does not delete a fresh replacement lock", async () => {
   });
 });
 
+test("stale lock restore does not overwrite a newer post-quarantine lock", async () => {
+  await withTempDir("stale-lock-restore-race", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    await writeFile(lockPath, JSON.stringify({
+      schema_version: 1,
+      lock_id: "stale-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    }, null, 2) + "\n");
+
+    const replacement = {
+      schema_version: 1,
+      lock_id: "fresh-replacement",
+      owner: "steward",
+      pid: process.pid,
+      hostname: os.hostname(),
+      started_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      mode: "test",
+      operation: "replacement"
+    };
+    const newerLock = {
+      schema_version: 1,
+      lock_id: "newer-post-quarantine",
+      owner: "manager",
+      pid: process.pid,
+      hostname: os.hostname(),
+      started_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      mode: "test",
+      operation: "post-quarantine"
+    };
+    const loader = path.join(tmp, "stale-restore-race-loader.mjs");
+    const script = path.join(tmp, "break-stale-lock-restore-race.mjs");
+    await writeFile(loader, fsPromisesMockLoader(`
+      import * as real from "node:fs/promises";
+      export * from "node:fs/promises";
+
+      let installedReplacement = false;
+      let installedNewerLock = false;
+      const lockPath = process.env.SCUBA_STALE_RESTORE_RACE_LOCK;
+
+      export async function rename(from, to) {
+        if (!installedReplacement && String(from) === lockPath) {
+          installedReplacement = true;
+          await real.writeFile(lockPath, process.env.SCUBA_STALE_RESTORE_RACE_REPLACEMENT);
+        }
+        return real.rename(from, to);
+      }
+
+      export async function readFile(file, ...args) {
+        const data = await real.readFile(file, ...args);
+        if (!installedNewerLock && String(file).includes(".pr-feedback.lock.removing-")) {
+          installedNewerLock = true;
+          await real.writeFile(lockPath, process.env.SCUBA_STALE_RESTORE_RACE_NEWER_LOCK);
+        }
+        return data;
+      }
+    `));
+    await writeFile(script, `
+      import { acquirePrStateLock, resolvePrState } from ${JSON.stringify(pathToFileURL(path.join(ROOT, "tools", "lib", "pr-feedback-state.mjs")).href)};
+
+      const state = resolvePrState({ stateDir: ${JSON.stringify(state.stateDir)} });
+      try {
+        const lock = await acquirePrStateLock(state, {
+          owner: "watcher",
+          mode: "test",
+          operation: "after-restore-race",
+          timeoutMs: 25,
+          staleMs: 1
+        });
+        await lock.release();
+      } catch (error) {
+        process.stderr.write(error.message + "\\n");
+        process.exit(error.exitCode ?? 1);
+      }
+    `);
+
+    const raced = runNode(["--loader", loader, script], {
+      env: {
+        SCUBA_STALE_RESTORE_RACE_LOCK: lockPath,
+        SCUBA_STALE_RESTORE_RACE_REPLACEMENT: JSON.stringify(replacement, null, 2) + "\n",
+        SCUBA_STALE_RESTORE_RACE_NEWER_LOCK: JSON.stringify(newerLock, null, 2) + "\n"
+      }
+    });
+
+    assert.equal(raced.status, 75, raced.stderr);
+    const currentLock = JSON.parse(await readFile(lockPath, "utf8"));
+    assert.equal(currentLock.lock_id, "newer-post-quarantine");
+    assert.equal(currentLock.owner, "manager");
+  });
+});
+
 test("state reads and lock handling reject symlink escapes", async () => {
   await withTempDir("read-symlink", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });

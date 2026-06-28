@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
+  link,
   mkdir,
   open,
   readFile,
@@ -809,8 +810,16 @@ async function removeLockIfMatching(lockPath, expectedIdentity, stateDir, remove
 
 async function restoreQuarantinedLock(quarantine, lockPath) {
   try {
-    await rename(quarantine, lockPath);
+    // Hard-link restoration is atomic and refuses to replace a lock acquired after quarantine.
+    await link(quarantine, lockPath);
+    await rm(quarantine, { force: true });
+    await fsyncDirectory(path.dirname(lockPath));
   } catch (error) {
+    if (error.code === "EEXIST") {
+      await rm(quarantine, { force: true });
+      await fsyncDirectory(path.dirname(lockPath));
+      return;
+    }
     if (error.code !== "ENOENT") throw error;
   }
 }
