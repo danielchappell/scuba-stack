@@ -1228,6 +1228,71 @@ test("authoritative state, lock, and claim reads reject hardlinked files", async
   });
 });
 
+test("unsafe removal claims cannot block stale lock recovery through path metadata", async () => {
+  await withTempDir("unsafe-claim-authority", async (tmp) => {
+    const outside = path.join(tmp, "outside");
+    await mkdir(outside, { recursive: true });
+
+    async function assertUnsafeClaimRecovered(label, installClaim) {
+      const state = resolvePrState({ stateDir: path.join(tmp, label) });
+      await mkdir(state.stateDir, { recursive: true });
+      const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+      const lockBody = {
+        schema_version: 1,
+        lock_id: `${label}-stale-lock`,
+        owner: "watcher",
+        pid: 0,
+        hostname: os.hostname(),
+        started_at: "2026-06-27T00:00:00.000Z",
+        expires_at: "2026-06-27T00:00:01.000Z",
+        mode: "test",
+        operation: "stale"
+      };
+      const lockRaw = JSON.stringify(lockBody, null, 2) + "\n";
+      await writeFile(lockPath, lockRaw);
+      const lockIdentity = lockIdentityFromLock(lockBody, lockRaw);
+      const claimPath = lockRemovalClaimPath(lockPath, lockIdentity);
+      const claimBody = JSON.stringify({
+        schema_version: 1,
+        kind: "pr-feedback-lock-removal-claim",
+        identity_key: lockRemovalIdentityKey(lockIdentity),
+        claim_id: `${label}-unsafe-claim`,
+        pid: 12345,
+        hostname: "other-host",
+        claimed_at: new Date().toISOString()
+      }, null, 2) + "\n";
+
+      await installClaim({ claimPath, claimBody });
+
+      const recovered = runWatcher([
+        "status",
+        "--state-dir",
+        state.stateDir,
+        "--lock-stale-ms",
+        "1",
+        "--lock-timeout-ms",
+        "25"
+      ]);
+
+      assert.equal(recovered.status, 0, `${label}: ${recovered.stderr}`);
+      assert.equal(existsSync(lockPath), false, label);
+      assert.deepEqual(await removalClaimFiles(state.stateDir), [], label);
+    }
+
+    await assertUnsafeClaimRecovered("hardlinked-claim", async ({ claimPath, claimBody }) => {
+      const outsideClaim = path.join(outside, "hardlinked-claim");
+      await writeFile(outsideClaim, claimBody);
+      await link(outsideClaim, claimPath);
+    });
+
+    await assertUnsafeClaimRecovered("symlinked-claim", async ({ claimPath, claimBody }) => {
+      const outsideClaim = path.join(outside, "symlinked-claim");
+      await writeFile(outsideClaim, claimBody);
+      await symlink(outsideClaim, claimPath);
+    });
+  });
+});
+
 test("state reads are bound to the validated file, not a later symlink swap", async () => {
   await withTempDir("read-race", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
@@ -1423,6 +1488,42 @@ test("status and config JSON must be schema-valid before becoming authoritative"
     const invalidRepo = runWatcher(["status", "--state-dir", repoState.stateDir]);
     assert.equal(invalidRepo.status, 20);
     assert.equal(parseStdoutJson(invalidRepo).reason, "configuration_invalid");
+
+    for (const [label, team] of [["blank-team", " "], ["path-team", "bad/team"]]) {
+      const badTeamState = resolvePrState({ stateDir: path.join(tmp, label) });
+      await mkdir(badTeamState.stateDir, { recursive: true });
+      await writeFile(path.join(badTeamState.stateDir, "config.json"), JSON.stringify({
+        ...validConfig(),
+        team
+      }, null, 2) + "\n");
+      const invalidTeam = runWatcher(["status", "--state-dir", badTeamState.stateDir]);
+      assert.equal(invalidTeam.status, 20);
+      assert.equal(parseStdoutJson(invalidTeam).reason, "configuration_invalid");
+    }
+
+    for (const [label, configText] of [
+      ["rounded-pr", `{
+        "schema_version": 1,
+        "team": "alpha",
+        "repo": "octo/repo",
+        "pr_number": 9007199254740993,
+        "external_reviewer": { "login": "reviewer" }
+      }\n`],
+      ["huge-pr", `{
+        "schema_version": 1,
+        "team": "alpha",
+        "repo": "octo/repo",
+        "pr_number": 1e100,
+        "external_reviewer": { "login": "reviewer" }
+      }\n`]
+    ]) {
+      const badPrState = resolvePrState({ stateDir: path.join(tmp, label) });
+      await mkdir(badPrState.stateDir, { recursive: true });
+      await writeFile(path.join(badPrState.stateDir, "config.json"), configText);
+      const invalidPr = runWatcher(["status", "--state-dir", badPrState.stateDir]);
+      assert.equal(invalidPr.status, 20);
+      assert.equal(parseStdoutJson(invalidPr).reason, "configuration_invalid");
+    }
   });
 });
 
@@ -1441,6 +1542,22 @@ test("CLI validates numeric inputs and selectors before runtime state operations
     const mixedSelector = runWatcher(["snapshot", "--state-dir", path.join(tmp, "pr-state"), "--team", "alpha", "--pr", "1"]);
     assert.equal(mixedSelector.status, 30);
     assert.equal(parseStdoutJson(mixedSelector).reason, "usage");
+
+    const emptyStateDirMixed = runWatcher(["replay", "--state-dir", "", "--team", "alpha", "--pr", "1"], { cwd: tmp });
+    assert.equal(emptyStateDirMixed.status, 30);
+    assert.equal(parseStdoutJson(emptyStateDirMixed).reason, "usage");
+    assert.equal(
+      existsSync(path.join(tmp, ".scuba", "teams", "alpha", "pr-feedback", "pr-1", "event-index.json")),
+      false
+    );
+
+    const emptyTeamWithStateDir = runWatcher(["snapshot", "--state-dir", path.join(tmp, "snapshot-state"), "--team", ""]);
+    assert.equal(emptyTeamWithStateDir.status, 30);
+    assert.equal(parseStdoutJson(emptyTeamWithStateDir).reason, "usage");
+
+    const emptyPrWithStateDir = runWatcher(["poll", "--state-dir", path.join(tmp, "poll-state"), "--pr", ""]);
+    assert.equal(emptyPrWithStateDir.status, 30);
+    assert.equal(parseStdoutJson(emptyPrWithStateDir).reason, "usage");
 
     const badPollSelector = runWatcher(["poll", "--team", "bad/team", "--pr", "0"], { cwd: tmp });
     assert.equal(badPollSelector.status, 30);

@@ -88,7 +88,8 @@ export class ConfigurationError extends PrStateError {
 }
 
 export function resolvePrState({ stateDir, rootDir = process.cwd(), team, pr } = {}) {
-  if (stateDir) {
+  if (stateDir !== undefined && stateDir !== null) {
+    validateStateDirSelector(stateDir);
     return buildPrState(path.resolve(rootDir, stateDir), { team, pr: parseOptionalPr(pr) });
   }
 
@@ -420,7 +421,7 @@ function parseOptionalPr(value) {
 }
 
 function parseRequiredPr(value) {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+  if (validPrNumber(value)) {
     return value;
   }
   if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
@@ -434,8 +435,17 @@ function parseRequiredPr(value) {
 }
 
 function validateTeamName(team) {
-  if (typeof team !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(team)) {
+  if (!validTeamName(team)) {
     throw new PrStateError(`Invalid team name '${team}'`, {
+      code: "usage",
+      exitCode: 30
+    });
+  }
+}
+
+function validateStateDirSelector(stateDir) {
+  if (typeof stateDir !== "string" || stateDir.length === 0) {
+    throw new PrStateError("--state-dir must be a non-empty path", {
       code: "usage",
       exitCode: 30
     });
@@ -1005,6 +1015,7 @@ function validLockRemovalClaim(claim) {
 
 function removalClaimIsStale(existing, identityKey) {
   if (!existing.exists) return true;
+  if (existing.unsafe) return true;
   if (!existing.stats) return true;
   if (!existing.valid) return metadataMtimeIsStale(existing.stats.mtimeMs, LOCK_REMOVAL_CLAIM_GRACE_MS);
 
@@ -1138,12 +1149,12 @@ function validateConfig(config, file, state) {
   if (schemaVersion !== PR_STATE_SCHEMA_VERSION) {
     throw new ConfigurationError(file, "schema_version must be 1");
   }
-  if (typeof config.team !== "string" || config.team.length === 0) {
-    throw new ConfigurationError(file, "team is required");
+  if (!validTeamName(config.team)) {
+    throw new ConfigurationError(file, "team must be a valid team identity");
   }
   const configPr = config.pr_number ?? config.prNumber;
-  if (!Number.isInteger(configPr) || configPr <= 0) {
-    throw new ConfigurationError(file, "pr_number must be a positive integer");
+  if (!validPrNumber(configPr)) {
+    throw new ConfigurationError(file, "pr_number must be a positive safe integer");
   }
   if (state.team && config.team !== state.team) {
     throw new ConfigurationError(file, `team '${config.team}' does not match selected team '${state.team}'`);
@@ -1205,6 +1216,14 @@ function nonEmptyString(value) {
 
 function repoIdentityAtom(value) {
   return typeof value === "string" && /^[^/\s]+$/.test(value);
+}
+
+function validTeamName(team) {
+  return typeof team === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(team);
+}
+
+function validPrNumber(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 function emptyReplay() {

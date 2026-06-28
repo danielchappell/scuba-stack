@@ -201,8 +201,30 @@ function parseArgs(args) {
 }
 
 function resolveStateFromOptions(options) {
-  if (options.stateDir && (options.team || options.pr)) {
+  const hasStateDir = hasOption(options, "stateDir");
+  const hasTeam = hasOption(options, "team");
+  const hasPr = hasOption(options, "pr");
+
+  if (hasStateDir && (hasTeam || hasPr)) {
     throw new PrStateError("--state-dir cannot be combined with --team or --pr", {
+      code: "usage",
+      exitCode: 30
+    });
+  }
+  if (hasStateDir && options.stateDir.length === 0) {
+    throw new PrStateError("--state-dir must be a non-empty path", {
+      code: "usage",
+      exitCode: 30
+    });
+  }
+  if (hasTeam && options.team.length === 0) {
+    throw new PrStateError("--team must be a non-empty value", {
+      code: "usage",
+      exitCode: 30
+    });
+  }
+  if (hasPr && options.pr.length === 0) {
+    throw new PrStateError("--pr must be a non-empty value", {
       code: "usage",
       exitCode: 30
     });
@@ -212,6 +234,10 @@ function resolveStateFromOptions(options) {
     team: options.team,
     pr: options.pr
   });
+}
+
+function hasOption(options, key) {
+  return Object.prototype.hasOwnProperty.call(options, key);
 }
 
 async function acquireWatcherLock(state, mode, options) {
