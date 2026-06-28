@@ -37,6 +37,7 @@ export const PR_STATE_OWNERSHIP = Object.freeze({
 });
 
 const OWNER_KINDS = new Set(Object.keys(PR_STATE_OWNERSHIP));
+const LOCK_REMOVAL_CLAIM_GRACE_MS = 1000;
 
 export class PrStateError extends Error {
   constructor(message, { code, file, exitCode } = {}) {
@@ -799,37 +800,123 @@ async function removeLockIfMatching(lockPath, expectedIdentity, stateDir, remove
     if (!lockIdentityMatches(current.identity, expectedIdentity)) {
       return null;
     }
+    if (!await lockRemovalClaimMatches(claimPath, claimed)) {
+      return null;
+    }
     await rm(lockPath, { force: true });
     await fsyncDirectory(stateDir);
     return removedValue;
   } finally {
-    await rm(claimPath, { force: true }).catch(() => {});
+    await releaseLockRemovalClaim(claimPath, claimed);
     await fsyncDirectory(path.dirname(claimPath));
   }
 }
 
 async function claimLockRemoval(claimPath, expectedIdentity) {
-  try {
-    const handle = await open(claimPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+  const identityKey = lockRemovalIdentityKey(expectedIdentity);
+
+  while (true) {
+    const claim = {
+      schema_version: PR_STATE_SCHEMA_VERSION,
+      kind: "pr-feedback-lock-removal-claim",
+      identity_key: identityKey,
+      claim_id: randomUUID(),
+      pid: process.pid,
+      hostname: os.hostname(),
+      claimed_at: new Date().toISOString()
+    };
+
     try {
-      await handle.writeFile(JSON.stringify({
-        schema_version: PR_STATE_SCHEMA_VERSION,
-        kind: "pr-feedback-lock-removal-claim",
-        identity_key: lockRemovalIdentityKey(expectedIdentity),
-        pid: process.pid,
-        hostname: os.hostname(),
-        claimed_at: new Date().toISOString()
-      }, null, 2) + "\n");
-      await handle.sync();
-    } finally {
-      await handle.close();
+      const handle = await open(claimPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+      try {
+        await handle.writeFile(JSON.stringify(claim, null, 2) + "\n");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await fsyncDirectory(path.dirname(claimPath));
+      return claim;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
     }
+
+    const existing = await readLockRemovalClaim(claimPath);
+    if (!removalClaimIsStale(existing, identityKey)) return null;
+    await rm(claimPath, { force: true }).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
     await fsyncDirectory(path.dirname(claimPath));
-    return true;
+  }
+}
+
+async function readLockRemovalClaim(claimPath) {
+  let stats;
+  try {
+    stats = await lstat(claimPath);
   } catch (error) {
-    if (error.code === "EEXIST") return false;
+    if (error.code === "ENOENT") {
+      return { exists: false, stale: true };
+    }
     throw error;
   }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    return { exists: true, stats, claim: null, valid: false };
+  }
+
+  let claim = null;
+  try {
+    claim = JSON.parse(await readFile(claimPath, "utf8"));
+  } catch {
+    return { exists: true, stats, claim: null, valid: false };
+  }
+
+  return {
+    exists: true,
+    stats,
+    claim,
+    valid: validLockRemovalClaim(claim)
+  };
+}
+
+function validLockRemovalClaim(claim) {
+  return Boolean(claim &&
+    typeof claim === "object" &&
+    !Array.isArray(claim) &&
+    claim.schema_version === PR_STATE_SCHEMA_VERSION &&
+    claim.kind === "pr-feedback-lock-removal-claim" &&
+    typeof claim.identity_key === "string" &&
+    /^[a-f0-9]{32}$/.test(claim.identity_key) &&
+    (claim.claim_id === undefined || (typeof claim.claim_id === "string" && claim.claim_id.length > 0)) &&
+    Number.isInteger(claim.pid) &&
+    typeof claim.hostname === "string" &&
+    claim.hostname.length > 0 &&
+    Number.isFinite(Date.parse(claim.claimed_at)));
+}
+
+function removalClaimIsStale(existing, identityKey) {
+  if (!existing.exists) return true;
+  const ageMs = Date.now() - existing.stats.mtimeMs;
+  if (!existing.valid) return ageMs > LOCK_REMOVAL_CLAIM_GRACE_MS;
+
+  const claim = existing.claim;
+  if (claim.identity_key !== identityKey) return claim.hostname !== os.hostname() || !isProcessAlive(claim.pid);
+  if (claim.hostname === os.hostname()) return !isProcessAlive(claim.pid);
+  return Date.now() - Date.parse(claim.claimed_at) > DEFAULT_LOCK_STALE_MS;
+}
+
+async function lockRemovalClaimMatches(claimPath, expectedClaim) {
+  const current = await readLockRemovalClaim(claimPath);
+  if (!current.valid) return false;
+  return current.claim.identity_key === expectedClaim.identity_key &&
+    current.claim.claim_id === expectedClaim.claim_id &&
+    current.claim.pid === expectedClaim.pid &&
+    current.claim.hostname === expectedClaim.hostname &&
+    current.claim.claimed_at === expectedClaim.claimed_at;
+}
+
+async function releaseLockRemovalClaim(claimPath, expectedClaim) {
+  if (!await lockRemovalClaimMatches(claimPath, expectedClaim)) return;
+  await rm(claimPath, { force: true }).catch(() => {});
 }
 
 function lockRemovalClaimPath(lockPath, expectedIdentity) {

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -482,6 +483,122 @@ test("malformed parsed lock files become stale-breakable by mtime", async () => 
   });
 });
 
+test("stale removal claims are crash recoverable", async () => {
+  await withTempDir("stale-removal-claim-recovery", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    await writeFile(lockPath, JSON.stringify({
+      schema_version: 1,
+      lock_id: "stale-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    }, null, 2) + "\n");
+
+    const loader = path.join(tmp, "stale-claim-crash-loader.mjs");
+    const script = path.join(tmp, "break-stale-lock-and-crash.mjs");
+    await writeFile(loader, fsPromisesMockLoader(`
+      import * as real from "node:fs/promises";
+      export * from "node:fs/promises";
+
+      let lockReads = 0;
+      const lockPath = process.env.SCUBA_STALE_CLAIM_LOCK;
+
+      export async function readFile(file, ...args) {
+        if (String(file) === lockPath) {
+          lockReads += 1;
+          if (lockReads === 2) process.exit(99);
+        }
+        return real.readFile(file, ...args);
+      }
+    `));
+    await writeFile(script, `
+      import { acquirePrStateLock, resolvePrState } from ${JSON.stringify(pathToFileURL(path.join(ROOT, "tools", "lib", "pr-feedback-state.mjs")).href)};
+
+      const state = resolvePrState({ stateDir: ${JSON.stringify(state.stateDir)} });
+      const lock = await acquirePrStateLock(state, {
+        owner: "watcher",
+        mode: "test",
+        operation: "after-crash",
+        timeoutMs: 25,
+        staleMs: 1
+      });
+      await lock.release();
+    `);
+
+    const crashed = runNode(["--loader", loader, script], {
+      env: {
+        SCUBA_STALE_CLAIM_LOCK: lockPath
+      }
+    });
+
+    assert.equal(crashed.status, 99, crashed.stderr);
+    assert.equal(existsSync(lockPath), true);
+    assert.equal((await removalClaimFiles(state.stateDir)).length, 1);
+
+    const recovered = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+
+    assert.equal(recovered.status, 0, recovered.stderr);
+    const summary = parseStdoutJson(recovered);
+    assert.equal(summary.status, "status_checked");
+    const recorded = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(recorded.stale_lock_break.previous_lock.operation, "stale");
+    assert.equal(existsSync(lockPath), false);
+    assert.deepEqual(await removalClaimFiles(state.stateDir), []);
+  });
+});
+
+test("stale removal claim recovery preserves a mismatched current lock", async () => {
+  await withTempDir("stale-removal-claim-mismatch", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    const staleLock = await acquirePrStateLock(state, {
+      owner: "watcher",
+      mode: "test",
+      operation: "superseded",
+      timeoutMs: 0,
+      staleMs: 30_000
+    });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    const claimPath = lockRemovalClaimPath(lockPath, staleLock.lockIdentity);
+    await writeFile(claimPath, JSON.stringify({
+      schema_version: 1,
+      kind: "pr-feedback-lock-removal-claim",
+      identity_key: lockRemovalIdentityKey(staleLock.lockIdentity),
+      claim_id: "crashed-remover",
+      pid: 0,
+      hostname: os.hostname(),
+      claimed_at: "2026-06-27T00:00:00.000Z"
+    }, null, 2) + "\n");
+    await rm(lockPath, { force: true });
+
+    const activeLock = await acquirePrStateLock(state, {
+      owner: "steward",
+      mode: "test",
+      operation: "active-replacement",
+      timeoutMs: 0,
+      staleMs: 30_000
+    });
+
+    try {
+      await staleLock.release();
+      await writePrStateJson(state, "steward", "closeout.json", {
+        schema_version: 1,
+        status: "active-lock-still-current"
+      }, { lock: activeLock });
+      const currentLock = JSON.parse(await readFile(lockPath, "utf8"));
+      assert.equal(currentLock.lock_id, activeLock.lock_id);
+      assert.equal(existsSync(claimPath), false);
+    } finally {
+      await activeLock.release();
+    }
+  });
+});
+
 test("stale lock break does not delete a fresh replacement lock", async () => {
   await withTempDir("stale-lock-race", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
@@ -834,6 +951,40 @@ function eventRevision(eventId, revisionId, extra = {}) {
     observed_at: "2026-06-28T00:00:00.000Z",
     payload: extra
   };
+}
+
+async function removalClaimFiles(stateDir) {
+  return (await readdir(stateDir))
+    .filter((entry) => /^\.pr-feedback\.lock\.remove-[a-f0-9]{32}\.claim$/.test(entry))
+    .sort();
+}
+
+function lockRemovalClaimPath(lockPath, expectedIdentity) {
+  return path.join(path.dirname(lockPath), `.pr-feedback.lock.remove-${lockRemovalIdentityKey(expectedIdentity)}.claim`);
+}
+
+function lockRemovalIdentityKey(expectedIdentity) {
+  return sha256(canonicalJson(expectedIdentity)).slice(0, 32);
+}
+
+function canonicalJson(value) {
+  return JSON.stringify(canonicalize(value));
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map((entry) => canonicalize(entry));
+  if (value && typeof value === "object") {
+    const normalized = {};
+    for (const key of Object.keys(value).sort()) {
+      normalized[key] = canonicalize(value[key]);
+    }
+    return normalized;
+  }
+  return value;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function assertLockBusy(promise) {
