@@ -307,6 +307,130 @@ test("explicit lock reuse requires the current live lock instance", async () => 
   });
 });
 
+test("stale release never opens an acquisition gap over a live replacement lock", async () => {
+  await withTempDir("stale-release-gap", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    const gapFile = path.join(tmp, "lock-gap-opened");
+    const continueFile = path.join(tmp, "continue-release");
+    const loader = path.join(tmp, "stale-release-gap-loader.mjs");
+    const script = path.join(tmp, "stale-release-gap.mjs");
+
+    await writeFile(loader, fsPromisesMockLoader(`
+      import * as real from "node:fs/promises";
+      export * from "node:fs/promises";
+
+      let paused = false;
+      const lockPath = process.env.SCUBA_STALE_RELEASE_GAP_LOCK;
+      const gapFile = process.env.SCUBA_STALE_RELEASE_GAP_FILE;
+      const continueFile = process.env.SCUBA_STALE_RELEASE_CONTINUE_FILE;
+
+      async function waitForContinue() {
+        for (;;) {
+          try {
+            await real.readFile(continueFile);
+            return;
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+        }
+      }
+
+      export async function rename(from, to) {
+        const result = await real.rename(from, to);
+        if (!paused && String(from) === lockPath && String(to).includes(".pr-feedback.lock.removing-")) {
+          paused = true;
+          await real.writeFile(gapFile, "gap\\n");
+          await waitForContinue();
+        }
+        return result;
+      }
+    `));
+
+    await writeFile(script, `
+      import assert from "node:assert/strict";
+      import { readFile, rm, writeFile } from "node:fs/promises";
+      import {
+        acquirePrStateLock,
+        resolvePrState,
+        writePrStateJson
+      } from ${JSON.stringify(pathToFileURL(path.join(ROOT, "tools", "lib", "pr-feedback-state.mjs")).href)};
+
+      const state = resolvePrState({ stateDir: ${JSON.stringify(state.stateDir)} });
+      const lockPath = ${JSON.stringify(lockPath)};
+      const gapFile = ${JSON.stringify(gapFile)};
+      const continueFile = ${JSON.stringify(continueFile)};
+
+      const staleLock = await acquirePrStateLock(state, {
+        owner: "watcher",
+        mode: "test",
+        operation: "superseded",
+        timeoutMs: 0,
+        staleMs: 30_000
+      });
+      await rm(lockPath, { force: true });
+
+      const activeLock = await acquirePrStateLock(state, {
+        owner: "steward",
+        mode: "test",
+        operation: "active-replacement",
+        timeoutMs: 0,
+        staleMs: 30_000
+      });
+
+      let thirdLock = null;
+      try {
+        const release = staleLock.release();
+        let sawGap = false;
+        for (let i = 0; i < 50; i += 1) {
+          try {
+            await readFile(gapFile, "utf8");
+            sawGap = true;
+            break;
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+        }
+
+        if (sawGap) {
+          thirdLock = await acquirePrStateLock(state, {
+            owner: "manager",
+            mode: "test",
+            operation: "gap-acquirer",
+            timeoutMs: 0,
+            staleMs: 30_000
+          });
+        }
+
+        await writeFile(continueFile, "continue\\n");
+        await release;
+
+        await writePrStateJson(state, "steward", "closeout.json", {
+          schema_version: 1,
+          status: "active-lock-still-current"
+        }, { lock: activeLock });
+        const currentLock = JSON.parse(await readFile(lockPath, "utf8"));
+        assert.equal(currentLock.lock_id, activeLock.lock_id);
+      } finally {
+        if (thirdLock) await thirdLock.release();
+        await activeLock.release();
+      }
+    `);
+
+    const raced = runNode(["--loader", loader, script], {
+      env: {
+        SCUBA_STALE_RELEASE_GAP_LOCK: lockPath,
+        SCUBA_STALE_RELEASE_GAP_FILE: gapFile,
+        SCUBA_STALE_RELEASE_CONTINUE_FILE: continueFile
+      }
+    });
+
+    assert.equal(raced.status, 0, raced.stderr);
+  });
+});
+
 test("status records stale lock breaks durably", async () => {
   await withTempDir("stale-status", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
@@ -393,20 +517,15 @@ test("stale lock break does not delete a fresh replacement lock", async () => {
       export * from "node:fs/promises";
 
       let raced = false;
-      async function installReplacement(file) {
-        if (raced || String(file) !== process.env.SCUBA_STALE_RACE_LOCK) return;
-        raced = true;
-        await real.writeFile(file, process.env.SCUBA_STALE_RACE_REPLACEMENT);
-      }
+      const lockPath = process.env.SCUBA_STALE_RACE_LOCK;
 
-      export async function unlink(file) {
-        await installReplacement(file);
-        return real.unlink(file);
-      }
-
-      export async function rename(from, to) {
-        await installReplacement(from);
-        return real.rename(from, to);
+      export async function readFile(file, ...args) {
+        const data = await real.readFile(file, ...args);
+        if (!raced && String(file) === lockPath) {
+          raced = true;
+          await real.writeFile(lockPath, process.env.SCUBA_STALE_RACE_REPLACEMENT);
+        }
+        return data;
       }
     `));
     await writeFile(script, `
@@ -442,11 +561,13 @@ test("stale lock break does not delete a fresh replacement lock", async () => {
   });
 });
 
-test("stale lock restore does not overwrite a newer post-quarantine lock", async () => {
+test("stale lock break never opens an acquisition gap over a live replacement lock", async () => {
   await withTempDir("stale-lock-restore-race", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
     await mkdir(state.stateDir, { recursive: true });
     const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    const gapFile = path.join(tmp, "lock-gap-opened");
+    const continueFile = path.join(tmp, "continue-break");
     await writeFile(lockPath, JSON.stringify({
       schema_version: 1,
       lock_id: "stale-lock",
@@ -470,17 +591,6 @@ test("stale lock restore does not overwrite a newer post-quarantine lock", async
       mode: "test",
       operation: "replacement"
     };
-    const newerLock = {
-      schema_version: 1,
-      lock_id: "newer-post-quarantine",
-      owner: "manager",
-      pid: process.pid,
-      hostname: os.hostname(),
-      started_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 60_000).toISOString(),
-      mode: "test",
-      operation: "post-quarantine"
-    };
     const loader = path.join(tmp, "stale-restore-race-loader.mjs");
     const script = path.join(tmp, "break-stale-lock-restore-race.mjs");
     await writeFile(loader, fsPromisesMockLoader(`
@@ -488,42 +598,95 @@ test("stale lock restore does not overwrite a newer post-quarantine lock", async
       export * from "node:fs/promises";
 
       let installedReplacement = false;
-      let installedNewerLock = false;
+      let paused = false;
       const lockPath = process.env.SCUBA_STALE_RESTORE_RACE_LOCK;
+      const gapFile = process.env.SCUBA_STALE_RESTORE_RACE_GAP_FILE;
+      const continueFile = process.env.SCUBA_STALE_RESTORE_RACE_CONTINUE_FILE;
 
-      export async function rename(from, to) {
-        if (!installedReplacement && String(from) === lockPath) {
-          installedReplacement = true;
-          await real.writeFile(lockPath, process.env.SCUBA_STALE_RESTORE_RACE_REPLACEMENT);
+      async function waitForContinue() {
+        for (;;) {
+          try {
+            await real.readFile(continueFile);
+            return;
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
         }
-        return real.rename(from, to);
       }
 
       export async function readFile(file, ...args) {
         const data = await real.readFile(file, ...args);
-        if (!installedNewerLock && String(file).includes(".pr-feedback.lock.removing-")) {
-          installedNewerLock = true;
-          await real.writeFile(lockPath, process.env.SCUBA_STALE_RESTORE_RACE_NEWER_LOCK);
+        if (!installedReplacement && String(file) === lockPath) {
+          installedReplacement = true;
+          await real.writeFile(lockPath, process.env.SCUBA_STALE_RESTORE_RACE_REPLACEMENT);
         }
         return data;
       }
+
+      export async function rename(from, to) {
+        const result = await real.rename(from, to);
+        if (!paused && String(from) === lockPath && String(to).includes(".pr-feedback.lock.removing-")) {
+          paused = true;
+          await real.writeFile(gapFile, "gap\\n");
+          await waitForContinue();
+        }
+        return result;
+      }
     `));
     await writeFile(script, `
+      import assert from "node:assert/strict";
+      import { readFile, writeFile } from "node:fs/promises";
       import { acquirePrStateLock, resolvePrState } from ${JSON.stringify(pathToFileURL(path.join(ROOT, "tools", "lib", "pr-feedback-state.mjs")).href)};
 
       const state = resolvePrState({ stateDir: ${JSON.stringify(state.stateDir)} });
+      const lockPath = ${JSON.stringify(lockPath)};
+      const gapFile = ${JSON.stringify(gapFile)};
+      const continueFile = ${JSON.stringify(continueFile)};
+      let thirdLock = null;
       try {
-        const lock = await acquirePrStateLock(state, {
+        const breakAttempt = acquirePrStateLock(state, {
           owner: "watcher",
           mode: "test",
           operation: "after-restore-race",
           timeoutMs: 25,
           staleMs: 1
         });
-        await lock.release();
-      } catch (error) {
-        process.stderr.write(error.message + "\\n");
-        process.exit(error.exitCode ?? 1);
+        const observedBreakAttempt = breakAttempt.then(
+          (lock) => ({ lock }),
+          (error) => ({ error })
+        );
+
+        let sawGap = false;
+        for (let i = 0; i < 50; i += 1) {
+          try {
+            await readFile(gapFile, "utf8");
+            sawGap = true;
+            break;
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+        }
+
+        if (sawGap) {
+          thirdLock = await acquirePrStateLock(state, {
+            owner: "manager",
+            mode: "test",
+            operation: "gap-acquirer",
+            timeoutMs: 0,
+            staleMs: 30_000
+          });
+        }
+
+        await writeFile(continueFile, "continue\\n");
+        const breakResult = await observedBreakAttempt;
+        assert.equal(breakResult.error?.code, "lock_busy");
+        const currentLock = JSON.parse(await readFile(lockPath, "utf8"));
+        assert.equal(currentLock.lock_id, "fresh-replacement");
+        assert.equal(currentLock.owner, "steward");
+      } finally {
+        if (thirdLock) await thirdLock.release();
       }
     `);
 
@@ -531,14 +694,15 @@ test("stale lock restore does not overwrite a newer post-quarantine lock", async
       env: {
         SCUBA_STALE_RESTORE_RACE_LOCK: lockPath,
         SCUBA_STALE_RESTORE_RACE_REPLACEMENT: JSON.stringify(replacement, null, 2) + "\n",
-        SCUBA_STALE_RESTORE_RACE_NEWER_LOCK: JSON.stringify(newerLock, null, 2) + "\n"
+        SCUBA_STALE_RESTORE_RACE_GAP_FILE: gapFile,
+        SCUBA_STALE_RESTORE_RACE_CONTINUE_FILE: continueFile
       }
     });
 
-    assert.equal(raced.status, 75, raced.stderr);
+    assert.equal(raced.status, 0, raced.stderr);
     const currentLock = JSON.parse(await readFile(lockPath, "utf8"));
-    assert.equal(currentLock.lock_id, "newer-post-quarantine");
-    assert.equal(currentLock.owner, "manager");
+    assert.equal(currentLock.lock_id, "fresh-replacement");
+    assert.equal(currentLock.owner, "steward");
   });
 });
 

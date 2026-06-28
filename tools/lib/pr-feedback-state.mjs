@@ -2,7 +2,6 @@ import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
-  link,
   mkdir,
   open,
   readFile,
@@ -785,43 +784,60 @@ function lockIsBreakable(current, fallbackStaleMs) {
 }
 
 async function removeLockIfMatching(lockPath, expectedIdentity, stateDir, removedValue = true) {
-  const quarantine = path.join(path.dirname(lockPath), `.pr-feedback.lock.removing-${process.pid}-${Date.now()}-${randomUUID()}`);
-  try {
-    await rename(lockPath, quarantine);
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
+  const claimPath = lockRemovalClaimPath(lockPath, expectedIdentity);
+  const claimed = await claimLockRemoval(claimPath, expectedIdentity);
+  if (!claimed) return null;
 
   try {
-    const moved = await readLockForIdentity(quarantine);
-    if (!lockIdentityMatches(moved.identity, expectedIdentity)) {
-      await restoreQuarantinedLock(quarantine, lockPath);
+    let current;
+    try {
+      current = await readLockForIdentity(lockPath);
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+    if (!lockIdentityMatches(current.identity, expectedIdentity)) {
       return null;
     }
-    await rm(quarantine, { force: true });
+    await rm(lockPath, { force: true });
     await fsyncDirectory(stateDir);
     return removedValue;
+  } finally {
+    await rm(claimPath, { force: true }).catch(() => {});
+    await fsyncDirectory(path.dirname(claimPath));
+  }
+}
+
+async function claimLockRemoval(claimPath, expectedIdentity) {
+  try {
+    const handle = await open(claimPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    try {
+      await handle.writeFile(JSON.stringify({
+        schema_version: PR_STATE_SCHEMA_VERSION,
+        kind: "pr-feedback-lock-removal-claim",
+        identity_key: lockRemovalIdentityKey(expectedIdentity),
+        pid: process.pid,
+        hostname: os.hostname(),
+        claimed_at: new Date().toISOString()
+      }, null, 2) + "\n");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fsyncDirectory(path.dirname(claimPath));
+    return true;
   } catch (error) {
-    await restoreQuarantinedLock(quarantine, lockPath).catch(() => {});
+    if (error.code === "EEXIST") return false;
     throw error;
   }
 }
 
-async function restoreQuarantinedLock(quarantine, lockPath) {
-  try {
-    // Hard-link restoration is atomic and refuses to replace a lock acquired after quarantine.
-    await link(quarantine, lockPath);
-    await rm(quarantine, { force: true });
-    await fsyncDirectory(path.dirname(lockPath));
-  } catch (error) {
-    if (error.code === "EEXIST") {
-      await rm(quarantine, { force: true });
-      await fsyncDirectory(path.dirname(lockPath));
-      return;
-    }
-    if (error.code !== "ENOENT") throw error;
-  }
+function lockRemovalClaimPath(lockPath, expectedIdentity) {
+  return path.join(path.dirname(lockPath), `.pr-feedback.lock.remove-${lockRemovalIdentityKey(expectedIdentity)}.claim`);
+}
+
+function lockRemovalIdentityKey(expectedIdentity) {
+  return sha256(canonicalJson(expectedIdentity)).slice(0, 32);
 }
 
 function lockIdentityFromLock(lock, raw = JSON.stringify(lock, null, 2) + "\n") {
