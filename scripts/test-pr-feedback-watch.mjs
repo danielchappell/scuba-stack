@@ -518,7 +518,7 @@ test("stale release never opens an acquisition gap over a live replacement lock"
   });
 });
 
-test("expired same-host live-pid locks recover after their lease", async () => {
+test("expired same-host live-pid locks stay busy while the local process is alive", async () => {
   await withTempDir("same-host-pid-reuse-lock", async (tmp) => {
     const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
     await mkdir(state.stateDir, { recursive: true });
@@ -537,10 +537,10 @@ test("expired same-host live-pid locks recover after their lease", async () => {
 
     const status = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
 
-    assert.equal(status.status, 0, status.stderr);
+    assert.equal(status.status, 75, status.stderr);
     const summary = parseStdoutJson(status);
-    assert.equal(summary.status, "status_checked");
-    assert.equal(existsSync(lockPath), false);
+    assert.equal(summary.reason, "lock_busy");
+    assert.equal(existsSync(lockPath), true);
   });
 });
 

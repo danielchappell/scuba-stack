@@ -894,6 +894,7 @@ function lockIsBreakable(current, fallbackStaleMs) {
   if (current.schemaValid) {
     const expiresAt = Date.parse(current.lock.expires_at);
     if (expiresAt > Date.now()) return false;
+    if (current.lock.hostname === os.hostname() && isProcessAlive(current.lock.pid)) return false;
     return true;
   }
   return metadataMtimeIsStale(current.stats.mtimeMs, fallbackStaleMs);
