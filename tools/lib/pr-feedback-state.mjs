@@ -87,6 +87,16 @@ export class ConfigurationError extends PrStateError {
   }
 }
 
+export class ConfigurationMissingError extends PrStateError {
+  constructor(file, detail) {
+    super(`Missing PR feedback config in ${file}: ${detail}`, {
+      code: "configuration_missing",
+      file,
+      exitCode: 20
+    });
+  }
+}
+
 export function resolvePrState({ stateDir, rootDir = process.cwd(), team, pr } = {}) {
   if (stateDir !== undefined && stateDir !== null) {
     validateStateDirSelector(stateDir);
@@ -1150,10 +1160,16 @@ function validateConfig(config, file, state) {
   if (schemaVersion !== PR_STATE_SCHEMA_VERSION) {
     throw new ConfigurationError(file, "schema_version must be 1");
   }
+  if (config.team === undefined) {
+    throw new ConfigurationMissingError(file, "team is required");
+  }
   if (!validTeamName(config.team)) {
     throw new ConfigurationError(file, "team must be a valid team identity");
   }
   const configPr = config.pr_number ?? config.prNumber;
+  if (configPr === undefined) {
+    throw new ConfigurationMissingError(file, "pr_number is required");
+  }
   if (!validPrNumber(configPr)) {
     throw new ConfigurationError(file, "pr_number must be a positive safe integer");
   }
@@ -1162,6 +1178,9 @@ function validateConfig(config, file, state) {
   }
   if (state.pr && configPr !== state.pr) {
     throw new ConfigurationError(file, `pr_number ${configPr} does not match selected PR ${state.pr}`);
+  }
+  if (config.repo === undefined) {
+    throw new ConfigurationMissingError(file, "repo is required");
   }
   if (!validRepo(config.repo)) {
     throw new ConfigurationError(file, "repo must be 'owner/name' or { owner, name }");
@@ -1173,6 +1192,9 @@ function validateConfig(config, file, state) {
   if (config.expected_head_sha !== undefined &&
       (typeof config.expected_head_sha !== "string" || config.expected_head_sha.length === 0)) {
     throw new ConfigurationError(file, "expected_head_sha must be a non-empty string");
+  }
+  if (config.external_reviewer === undefined) {
+    throw new ConfigurationMissingError(file, "external_reviewer is required");
   }
   if (!validReviewerConfig(config.external_reviewer)) {
     throw new ConfigurationError(file, "external_reviewer must be a non-empty string or object");
