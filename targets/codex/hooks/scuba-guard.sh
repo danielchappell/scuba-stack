@@ -136,6 +136,81 @@ in_temp() {
   return 1
 }
 
+normalize_shell_words() {
+  printf '%s' "$1" | tr '\n' ' ' | sed -E "s/[\"']//g; s/([;&|()])/ \1 /g"
+}
+
+is_shell_separator() {
+  case "$1" in
+    ";"|"&"|"|"|"("|")") return 0 ;;
+  esac
+  return 1
+}
+
+is_draft_flag() {
+  local token="$1" value
+  case "$token" in
+    --draft|-d|-d=*) return 0 ;;
+    --draft=*)
+      value="${token#--draft=}"
+      case "$value" in
+        false|False|FALSE|0|no|No|NO) return 1 ;;
+        *) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
+has_gh_draft_pr_create() {
+  local normalized token sub i j
+  local -a words
+  normalized="$(normalize_shell_words "$1")"
+  read -r -a words <<< "$normalized"
+
+  for ((i = 0; i < ${#words[@]}; i += 1)); do
+    [ "${words[$i]}" = "gh" ] || continue
+    j=$((i + 1))
+
+    while [ "$j" -lt "${#words[@]}" ]; do
+      token="${words[$j]}"
+      is_shell_separator "$token" && break
+      [ "$token" = "pr" ] && break
+      case "$token" in
+        -R|--repo|--hostname|--config)
+          j=$((j + 2))
+          ;;
+        --repo=*|--hostname=*|--config=*|--*)
+          j=$((j + 1))
+          ;;
+        -*)
+          j=$((j + 1))
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
+
+    [ "$j" -lt "${#words[@]}" ] || continue
+    [ "${words[$j]}" = "pr" ] || continue
+    j=$((j + 1))
+    [ "$j" -lt "${#words[@]}" ] || continue
+    sub="${words[$j]}"
+    [ "$sub" = "create" ] || [ "$sub" = "new" ] || continue
+    j=$((j + 1))
+
+    while [ "$j" -lt "${#words[@]}" ]; do
+      token="${words[$j]}"
+      is_shell_separator "$token" && break
+      is_draft_flag "$token" && return 0
+      j=$((j + 1))
+    done
+  done
+
+  return 1
+}
+
 is_doc_path() {
   local p="$1" b
   b="$(basename "$p")"
@@ -208,14 +283,12 @@ check_bash() {
   local cmd="$1" cdtarget ctarget cflag
   [ -n "$cmd" ] || exit 0
 
-  if printf '%s' "$cmd" | grep -Eq 'gh[[:space:]]+pr[[:space:]]+(create|new)\b'; then
-    if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(--draft($|[[:space:]]|=true)|-d($|[[:space:]]|=))'; then
-      deny "Draft PRs are not reviewed by the external reviewer; open a non-draft PR."
-    fi
+  if has_gh_draft_pr_create "$cmd"; then
+    deny "Draft PRs are not reviewed by the external reviewer; open a non-draft PR."
   fi
 
-  if printf '%s' "$cmd" | grep -Eq 'gh[[:space:]]+api\b'; then
-    if printf '%s' "$cmd" | grep -Eiq '(draft[^[:alnum:]]*[:=]?[[:space:]]*true|convertPullRequestToDraft)'; then
+  if printf '%s' "$(normalize_shell_words "$cmd")" | grep -Eq '(^|[[:space:]])gh[[:space:]]+api\b'; then
+    if printf '%s' "$(normalize_shell_words "$cmd")" | grep -Eiq '(draft[^[:alnum:]]*[:=]?[[:space:]]*true|convertPullRequestToDraft)'; then
       deny "Draft PR creation or conversion through gh api is blocked by the never-draft rule."
     fi
   fi

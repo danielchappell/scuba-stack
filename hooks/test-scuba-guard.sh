@@ -110,7 +110,8 @@ jnb() { # $1=notebook_path $2=cwd $3=agent_id
   printf '{"tool_name":"NotebookEdit","tool_input":{"notebook_path":"%s"},"cwd":"%s","agent_id":"%s"}' "$1" "$2" "$3"
 }
 jb() { # $1=command $2=cwd
-  printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$1" "$2"
+  jq -cn --arg command "$1" --arg cwd "$2" \
+    '{tool_name:"Bash",tool_input:{command:$command},cwd:$cwd}'
 }
 
 # --- Containment cases (subagent: agent_id present, cwd inside the worktree) ---
@@ -156,6 +157,18 @@ run "gh pr create --draft" deny "$WORKTREE" \
 # Non-mutating draft-pattern command -> deny before help can run.
 run "gh pr create --draft --help" deny "$WORKTREE" \
   "$(jb 'gh pr create --draft --help' "$WORKTREE")"
+
+run "quoted gh pr create --draft" deny "$WORKTREE" \
+  "$(jb '"gh" pr create --draft --fill' "$WORKTREE")"
+
+run "quoted --draft flag" deny "$WORKTREE" \
+  "$(jb 'gh pr create "--draft" --fill' "$WORKTREE")"
+
+run "quoted -d flag" deny "$WORKTREE" \
+  "$(jb "gh pr create '-d' --fill" "$WORKTREE")"
+
+run "gh -R pr create --draft --help" deny "$WORKTREE" \
+  "$(jb 'gh -R owner/repo pr create --draft --help' "$WORKTREE")"
 
 # gh pr new --draft -> deny (documented alias)
 run "gh pr new --draft" deny "$WORKTREE" \

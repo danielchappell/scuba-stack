@@ -701,7 +701,9 @@ test("Codex JSONL audit acceptance gates operational proof", async () => {
             thread_source: "root",
             source: "codex"
           }),
-          responseItem("reasoning", { summary: "PRIVATE_REASONING_SHOULD_NOT_APPEAR" }),
+          responseItem("reasoning", {
+            summary: "PRIVATE_REASONING_SHOULD_NOT_APPEAR /repo/.codex/worktrees/PRIVATE_REASONING_PATH_SHOULD_NOT_APPEAR"
+          }),
           responseItem("function_call", {
             name: "exec_command",
             arguments: "touch /repo/.scuba/teams/scuba-reliability/s07-status.md"
@@ -739,7 +741,7 @@ test("Codex JSONL audit acceptance gates operational proof", async () => {
             name: "apply_patch",
             arguments: "write /repo/.codex/worktrees/scuba-reliability-s07-codex-proof/scripts/test.mjs"
           }),
-          responseItem("message", { text: "DO_NOT_LEAK_TRANSCRIPT_CONTENT" })
+          responseItem("message", { text: "DO_NOT_LEAK_TRANSCRIPT_CONTENT /repo/.scuba/PRIVATE_TRANSCRIPT_PATH_SHOULD_NOT_APPEAR" })
         ]
       }
     ]);
@@ -754,6 +756,8 @@ test("Codex JSONL audit acceptance gates operational proof", async () => {
     assert.match(cleanReport, /`scuba`/);
     assert.doesNotMatch(cleanReport, /DO_NOT_LEAK_TRANSCRIPT_CONTENT/);
     assert.doesNotMatch(cleanReport, /PRIVATE_REASONING_SHOULD_NOT_APPEAR/);
+    assert.doesNotMatch(cleanReport, /PRIVATE_TRANSCRIPT_PATH_SHOULD_NOT_APPEAR/);
+    assert.doesNotMatch(cleanReport, /PRIVATE_REASONING_PATH_SHOULD_NOT_APPEAR/);
 
     const parseHome = path.join(tmp, "parse-home");
     await writeCodexAuditFixture(parseHome, [
@@ -825,6 +829,51 @@ test("Codex JSONL audit acceptance gates operational proof", async () => {
     const metadata = await runAudit("root-metadata-session", metadataHome, metadataOut, ["--acceptance", "--require-subagent-metadata"]);
     assert.notEqual(metadata.status, 0);
     assert.match(await readFile(metadataOut, "utf8"), /subagent session without nickname, role, or agent path metadata/);
+
+    const requireSubagentsHome = path.join(tmp, "require-subagents-home");
+    await writeCodexAuditFixture(requireSubagentsHome, [
+      {
+        id: "root-only-session",
+        lines: [sessionMeta("root-only-session")]
+      }
+    ]);
+    const requireSubagentsOut = path.join(tmp, "require-subagents-report.md");
+    const requireSubagents = await runAudit("root-only-session", requireSubagentsHome, requireSubagentsOut, ["--acceptance", "--require-subagents"]);
+    assert.notEqual(requireSubagents.status, 0);
+    assert.match(await readFile(requireSubagentsOut, "utf8"), /No subagent session metadata was found for the requested proof claim/);
+
+    const corruptIndexHome = path.join(tmp, "corrupt-index-home");
+    await writeCodexAuditFixture(corruptIndexHome, [
+      {
+        id: "root-corrupt-index-session",
+        lines: [sessionMeta("root-corrupt-index-session")]
+      }
+    ]);
+    await appendFile(path.join(corruptIndexHome, "session_index.jsonl"), "{not-json\n");
+    const corruptIndexOut = path.join(tmp, "corrupt-index-report.md");
+    const corruptIndex = await runAudit("root-corrupt-index-session", corruptIndexHome, corruptIndexOut, ["--acceptance"]);
+    assert.notEqual(corruptIndex.status, 0);
+    assert.match(await readFile(corruptIndexOut, "utf8"), /session_index\.jsonl/);
+
+    const missingIndexHome = path.join(tmp, "missing-index-home");
+    await mkdir(missingIndexHome, { recursive: true });
+    const missingIndexList = await run("node", [
+      "scripts/audit-codex-jsonl.mjs",
+      "--list-recent",
+      "--codex-home",
+      missingIndexHome
+    ], { allowFailure: true });
+    assert.notEqual(missingIndexList.status, 0);
+    assert.match(missingIndexList.stderr, /session_index\.jsonl/);
+
+    const corruptIndexList = await run("node", [
+      "scripts/audit-codex-jsonl.mjs",
+      "--list-recent",
+      "--codex-home",
+      corruptIndexHome
+    ], { allowFailure: true });
+    assert.notEqual(corruptIndexList.status, 0);
+    assert.match(corruptIndexList.stderr, /session_index\.jsonl/);
   });
 });
 

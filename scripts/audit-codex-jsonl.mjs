@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -19,9 +19,11 @@ if (args.help) {
 }
 
 const codexHome = args.codexHome ?? path.join(os.homedir(), ".codex");
-const index = await readSessionIndex(path.join(codexHome, "session_index.jsonl"));
+const sessionIndex = await readSessionIndex(path.join(codexHome, "session_index.jsonl"));
+const index = sessionIndex.entries;
 
 if (args.listRecent) {
+  failIfSessionIndexUnavailable(sessionIndex);
   const recent = [...index.values()]
     .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")))
     .slice(0, 30);
@@ -70,31 +72,34 @@ for (const children of childrenByParent.values()) {
 }
 
 const selected = collectDescendants(args.rootThreadId, byId, childrenByParent);
+const acceptanceFailures = args.acceptance ? collectAcceptanceFailures({
+  sessions: selected,
+  rootThreadId: args.rootThreadId,
+  byId,
+  indexInfo: sessionIndex,
+  requireSubagents: args.requireSubagents,
+  requireSubagentMetadata: args.requireSubagentMetadata
+}) : undefined;
 const report = renderReport({
   rootThreadId: args.rootThreadId,
   codexHome,
+  indexInfo: sessionIndex,
   sessions: selected,
   byId,
-  childrenByParent
+  childrenByParent,
+  acceptanceFailures
 });
 
 if (args.out) {
-  await writeFile(args.out, report);
+  await writeFileAtomically(args.out, report);
 } else {
   process.stdout.write(report);
 }
 
 if (args.acceptance) {
-  const failures = collectAcceptanceFailures({
-    sessions: selected,
-    rootThreadId: args.rootThreadId,
-    byId,
-    requireSubagents: args.requireSubagents,
-    requireSubagentMetadata: args.requireSubagentMetadata
-  });
-  if (failures.length > 0) {
+  if (acceptanceFailures.length > 0) {
     console.error("Codex JSONL audit acceptance failed:");
-    for (const failure of failures) console.error(`- ${failure}`);
+    for (const failure of acceptanceFailures) console.error(`- ${failure}`);
     process.exit(2);
   }
 }
@@ -148,25 +153,35 @@ function requireValue(argv, index, option) {
 }
 
 async function readSessionIndex(file) {
-  const map = new Map();
+  const info = {
+    file,
+    entries: new Map(),
+    missing: false,
+    parseErrors: []
+  };
   let text = "";
   try {
     text = await readFile(file, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") return map;
+    if (error?.code === "ENOENT") {
+      info.missing = true;
+      return info;
+    }
     throw error;
   }
 
+  let lineNumber = 0;
   for (const line of text.split(/\r?\n/)) {
+    lineNumber += 1;
     if (!line.trim()) continue;
     try {
       const item = JSON.parse(line);
-      if (item?.id) map.set(item.id, item);
-    } catch {
-      // Ignore corrupt index lines; individual session files remain authoritative.
+      if (item?.id) info.entries.set(item.id, item);
+    } catch (error) {
+      info.parseErrors.push({ line: lineNumber, message: error.message });
     }
   }
-  return map;
+  return info;
 }
 
 async function listJsonlFiles(dir) {
@@ -233,7 +248,6 @@ async function parseSessionFile(file) {
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     summary.lineCount += 1;
-    collectPathEvidence(summary, line);
 
     let record;
     try {
@@ -286,6 +300,11 @@ function applySessionMeta(summary, payload = {}) {
   } else if (payload.source?.subagent) {
     summary.source ||= "subagent";
   }
+
+  collectPathEvidence(summary, payload.cwd);
+  collectPathEvidence(summary, payload.agent_path);
+  collectPathEvidence(summary, payload.agentPath);
+  collectPathEvidence(summary, payload.source?.subagent?.thread_spawn?.agent_path);
 }
 
 function applyTurnContext(summary, payload = {}) {
@@ -311,19 +330,35 @@ function applyResponseItem(summary, payload = {}) {
 
   if (type === "function_call") {
     increment(summary.functionCalls, payload.name ?? "unknown");
+    collectPathEvidence(summary, payload.arguments);
   } else if (type === "custom_tool_call") {
     increment(summary.customToolCalls, payload.name ?? payload.call_id ?? "custom_tool_call");
+    collectPathEvidence(summary, payload.input);
   }
 }
 
-function collectPathEvidence(summary, line) {
-  for (const match of line.matchAll(/(?:\/[^\s"'`\\]+)?\.scuba\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
+function collectPathEvidence(summary, value) {
+  if (typeof value === "string") {
+    collectPathEvidenceFromString(summary, value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectPathEvidence(summary, item);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) collectPathEvidence(summary, item);
+  }
+}
+
+function collectPathEvidenceFromString(summary, text) {
+  for (const match of text.matchAll(/(?:\/[^\s"'`\\]+)?\.scuba\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
     summary.scubaPaths.add(cleanPath(match[0]));
   }
-  for (const match of line.matchAll(/(?:\/[^\s"'`\\]+)?\.codex\/worktrees\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
+  for (const match of text.matchAll(/(?:\/[^\s"'`\\]+)?\.codex\/worktrees\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g)) {
     summary.worktreePaths.add(cleanPath(match[0]));
   }
-  for (const match of line.matchAll(/\.agents\/skills\/([A-Za-z0-9-]+)\/SKILL\.md/g)) {
+  for (const match of text.matchAll(/\.agents\/skills\/([A-Za-z0-9-]+)\/SKILL\.md/g)) {
     summary.skillReferences.add(match[1]);
   }
 }
@@ -347,7 +382,7 @@ function collectDescendants(rootId, byId, childrenByParent) {
   return [...selected.values()];
 }
 
-function renderReport({ rootThreadId, codexHome, sessions, byId, childrenByParent }) {
+function renderReport({ rootThreadId, codexHome, indexInfo, sessions, byId, childrenByParent, acceptanceFailures }) {
   const root = byId.get(rootThreadId);
   const lines = [];
   lines.push("# Codex JSONL Audit");
@@ -395,7 +430,7 @@ function renderReport({ rootThreadId, codexHome, sessions, byId, childrenByParen
   }
   lines.push("");
 
-  const gaps = collectGaps(sessions, rootThreadId, byId);
+  const gaps = collectGaps(sessions, rootThreadId, byId, indexInfo);
   lines.push("## Audit Gaps");
   lines.push("");
   if (gaps.length === 0) {
@@ -404,6 +439,17 @@ function renderReport({ rootThreadId, codexHome, sessions, byId, childrenByParen
     for (const gap of gaps) lines.push(`- ${gap}`);
   }
   lines.push("");
+
+  if (acceptanceFailures) {
+    lines.push("## Acceptance Failures");
+    lines.push("");
+    if (acceptanceFailures.length === 0) {
+      lines.push("- None.");
+    } else {
+      for (const failure of acceptanceFailures) lines.push(`- ${failure}`);
+    }
+    lines.push("");
+  }
 
   lines.push("## `.scuba` Evidence");
   lines.push("");
@@ -459,8 +505,9 @@ function renderTree(lines, session, childrenByParent, depth) {
   }
 }
 
-function collectGaps(sessions, rootThreadId, byId) {
+function collectGaps(sessions, rootThreadId, byId, indexInfo) {
   const gaps = [];
+  gaps.push(...collectSessionIndexParseFailures(indexInfo));
   if (!byId.has(rootThreadId)) {
     gaps.push(`Missing root session JSONL for \`${rootThreadId}\`.`);
   }
@@ -481,8 +528,9 @@ function collectGaps(sessions, rootThreadId, byId) {
   return gaps;
 }
 
-function collectAcceptanceFailures({ sessions, rootThreadId, byId, requireSubagents, requireSubagentMetadata }) {
+function collectAcceptanceFailures({ sessions, rootThreadId, byId, indexInfo, requireSubagents, requireSubagentMetadata }) {
   const failures = [];
+  failures.push(...collectSessionIndexParseFailures(indexInfo));
   if (!byId.has(rootThreadId)) {
     failures.push(`Missing root session JSONL for \`${rootThreadId}\`.`);
   }
@@ -510,6 +558,41 @@ function collectAcceptanceFailures({ sessions, rootThreadId, byId, requireSubage
   }
 
   return failures;
+}
+
+function collectSessionIndexParseFailures(indexInfo) {
+  return indexInfo.parseErrors.map((error) =>
+    `${path.basename(indexInfo.file)} line ${error.line} has a JSON parse error.`
+  );
+}
+
+function failIfSessionIndexUnavailable(indexInfo) {
+  if (indexInfo.missing) {
+    fail(`Codex session index not found: ${indexInfo.file}`);
+  }
+  const parseFailures = collectSessionIndexParseFailures(indexInfo);
+  if (parseFailures.length > 0) {
+    fail([
+      `Codex session index is not parseable: ${indexInfo.file}`,
+      ...parseFailures
+    ].join("\n"));
+  }
+}
+
+async function writeFileAtomically(file, content) {
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  const temp = path.join(dir, `.${base}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+  let renamed = false;
+  try {
+    await writeFile(temp, content, { flag: "wx" });
+    await rename(temp, file);
+    renamed = true;
+  } finally {
+    if (!renamed) {
+      await rm(temp, { force: true }).catch(() => {});
+    }
+  }
 }
 
 function isSubagentSession(session, rootThreadId) {

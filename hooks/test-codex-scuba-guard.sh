@@ -78,11 +78,23 @@ run "gh pr create --draft" deny \
 run "gh pr create --draft --help" deny \
   "$(jb 'gh pr create --draft --help' "$WORKTREE")"
 
+run "quoted gh pr create --draft" deny \
+  "$(jb '"gh" pr create --draft --fill' "$WORKTREE")"
+
+run "quoted --draft flag" deny \
+  "$(jb 'gh pr create "--draft" --fill' "$WORKTREE")"
+
 run "gh pr create -d" deny \
   "$(jb 'gh pr create -d --fill' "$WORKTREE")"
 
+run "quoted -d flag" deny \
+  "$(jb "gh pr create '-d' --fill" "$WORKTREE")"
+
 run "gh pr create --draft=true" deny \
   "$(jb 'gh pr create --draft=true --fill' "$WORKTREE")"
+
+run "gh -R pr create --draft --help" deny \
+  "$(jb 'gh -R owner/repo pr create --draft --help' "$WORKTREE")"
 
 run "gh pr new --draft" deny \
   "$(jb 'gh pr new --draft --fill' "$WORKTREE")"
