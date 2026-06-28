@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
+  link,
   mkdir,
   open,
   realpath,
@@ -81,6 +82,16 @@ export class ConfigurationError extends PrStateError {
   constructor(file, detail) {
     super(`Invalid PR feedback config in ${file}: ${detail}`, {
       code: "configuration_invalid",
+      file,
+      exitCode: 20
+    });
+  }
+}
+
+export class ConfigurationMissingError extends PrStateError {
+  constructor(file, detail) {
+    super(`Missing PR feedback config in ${file}: ${detail}`, {
+      code: "configuration_missing",
       file,
       exitCode: 20
     });
@@ -231,8 +242,16 @@ export async function withPrStateLock(state, options, fn) {
 export async function writePrStateJson(state, owner, relativePath, value, options = {}) {
   assertOwnerCanWrite(owner, relativePath);
   return runStateWrite(state, owner, options, async () => {
-    await writeJsonAtomic(state, relativePath, value);
+    await writeJsonAtomic(state, relativePath, value, options);
   });
+}
+
+export async function assertPrStateWritable(state, owner, relativePath, options = {}) {
+  assertOwnerCanWrite(owner, relativePath);
+  if (options.lock) {
+    await assertLockGuardsState(options.lock, state, owner);
+  }
+  await prepareDestination(state, relativePath);
 }
 
 export async function writePrStateText(state, owner, relativePath, value, options = {}) {
@@ -578,11 +597,11 @@ async function assertLockGuardsState(lock, state, owner) {
   }
 }
 
-async function writeJsonAtomic(state, relativePath, value) {
-  await writeTextAtomic(state, relativePath, JSON.stringify(value, null, 2) + "\n");
+async function writeJsonAtomic(state, relativePath, value, options = {}) {
+  await writeTextAtomic(state, relativePath, JSON.stringify(value, null, 2) + "\n", options);
 }
 
-async function writeTextAtomic(state, relativePath, value) {
+async function writeTextAtomic(state, relativePath, value, options = {}) {
   const target = await prepareDestination(state, relativePath);
   const tempName = `.${target.name}.scuba-tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const tempPath = path.join(target.parentReal, tempName);
@@ -595,7 +614,12 @@ async function writeTextAtomic(state, relativePath, value) {
       await handle.close();
     }
     await assertDestinationSafe(target);
-    await rename(tempPath, target.path);
+    if (options.noOverwrite) {
+      await link(tempPath, target.path);
+      await rm(tempPath, { force: true });
+    } else {
+      await rename(tempPath, target.path);
+    }
     await fsyncDirectory(target.parentReal);
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => {});
@@ -1150,10 +1174,16 @@ function validateConfig(config, file, state) {
   if (schemaVersion !== PR_STATE_SCHEMA_VERSION) {
     throw new ConfigurationError(file, "schema_version must be 1");
   }
+  if (config.team === undefined) {
+    throw new ConfigurationMissingError(file, "team is required");
+  }
   if (!validTeamName(config.team)) {
     throw new ConfigurationError(file, "team must be a valid team identity");
   }
   const configPr = config.pr_number ?? config.prNumber;
+  if (configPr === undefined) {
+    throw new ConfigurationMissingError(file, "pr_number is required");
+  }
   if (!validPrNumber(configPr)) {
     throw new ConfigurationError(file, "pr_number must be a positive safe integer");
   }
@@ -1162,6 +1192,9 @@ function validateConfig(config, file, state) {
   }
   if (state.pr && configPr !== state.pr) {
     throw new ConfigurationError(file, `pr_number ${configPr} does not match selected PR ${state.pr}`);
+  }
+  if (config.repo === undefined) {
+    throw new ConfigurationMissingError(file, "repo is required");
   }
   if (!validRepo(config.repo)) {
     throw new ConfigurationError(file, "repo must be 'owner/name' or { owner, name }");
@@ -1173,6 +1206,9 @@ function validateConfig(config, file, state) {
   if (config.expected_head_sha !== undefined &&
       (typeof config.expected_head_sha !== "string" || config.expected_head_sha.length === 0)) {
     throw new ConfigurationError(file, "expected_head_sha must be a non-empty string");
+  }
+  if (config.external_reviewer === undefined) {
+    throw new ConfigurationMissingError(file, "external_reviewer is required");
   }
   if (!validReviewerConfig(config.external_reviewer)) {
     throw new ConfigurationError(file, "external_reviewer must be a non-empty string or object");

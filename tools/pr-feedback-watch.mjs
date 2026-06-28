@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+
 import {
   ConfigurationError,
+  ConfigurationMissingError,
   CorruptStateError,
   DEFAULT_LOCK_STALE_MS,
   DEFAULT_LOCK_TIMEOUT_MS,
@@ -10,6 +15,7 @@ import {
   PR_STATE_SCHEMA_VERSION,
   PrStateError,
   acquirePrStateLock,
+  assertPrStateWritable,
   eventIndexFromReplay,
   loadConfig,
   readOptionalJson,
@@ -18,17 +24,29 @@ import {
   writePrStateJson
 } from "./lib/pr-feedback-state.mjs";
 
+const GITHUB_HOSTNAME = "github.com";
+const MERGEABILITY_MAX_ATTEMPTS = 5;
+const DEFAULT_MERGEABILITY_RETRY_DELAY_MS = 250;
+const GH_COMMAND_TIMEOUT_MS = envPositiveInteger("SCUBA_GH_COMMAND_TIMEOUT_MS", 10_000);
+const GH_TIMEOUT_KILL_GRACE_MS = envPositiveInteger("SCUBA_GH_TIMEOUT_KILL_GRACE_MS", 100);
+const GH_OUTPUT_LIMIT_BYTES = 64 * 1024;
+const DIAGNOSTIC_LIMIT_CHARS = 500;
+
 const USAGE = `Usage: pr-feedback-watch.mjs <snapshot|poll|replay|status> [options]
 
 Modes:
   status   Read local watcher status and closeout summary without GitHub.
   replay   Rebuild current event state from canonical events.jsonl.
-  snapshot Recognized for later watcher slices; no GitHub collection in S02.
-  poll     Recognized for later watcher slices; no GitHub collection in S02.
+  snapshot Collect one authenticated GitHub PR evidence snapshot.
+  poll     Recognized for later watcher slices; no terminal polling yet.
 
 State selection:
   --state-dir <dir>         Use an explicit PR state directory.
   --team <team> --pr <n>    Use .scuba/teams/<team>/pr-feedback/pr-<n>/.
+
+Snapshot options:
+  --mergeability-retry-delay-ms <n>
+                            Delay between UNKNOWN mergeability retries. Default: ${DEFAULT_MERGEABILITY_RETRY_DELAY_MS}.
 
 Lock options:
   --lock-timeout-ms <n>     Bounded lock wait. Default: ${DEFAULT_LOCK_TIMEOUT_MS}.
@@ -63,14 +81,16 @@ try {
     process.exitCode = await runStatus(options);
   } else if (command === "replay") {
     process.exitCode = await runReplay(options);
-  } else if (command === "snapshot" || command === "poll") {
+  } else if (command === "snapshot") {
+    process.exitCode = await runSnapshot(options);
+  } else if (command === "poll") {
     resolveStateFromOptions(options);
-    process.stderr.write(`pr-feedback-watch.mjs ${command} is recognized but GitHub collection is not implemented in S02.\n`);
+    process.stderr.write("pr-feedback-watch.mjs poll is recognized but terminal polling is not implemented in S03.\n");
     writeSummary({
       schema_version: PR_STATE_SCHEMA_VERSION,
       mode: command,
       status: "not_implemented",
-      reason: "mode_not_implemented_in_s02",
+      reason: "mode_not_implemented_in_s03",
       exit_code: 30
     });
     process.exitCode = 30;
@@ -85,6 +105,7 @@ try {
 }
 
 async function runStatus(options) {
+  const startedAt = new Date().toISOString();
   const state = resolveStateFromOptions(options);
   let lock;
   try {
@@ -99,7 +120,9 @@ async function runStatus(options) {
         mode: "status",
         status: "status_checked",
         exitCode: 0,
-        staleLockBreak: lock.staleBreak
+        staleLockBreak: lock.staleBreak,
+        lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+        startedAt
       });
       await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatus, {
         lock,
@@ -118,13 +141,14 @@ async function runStatus(options) {
     }));
     return 0;
   } catch (error) {
-    return await handleStateError(error, state, lock, "status");
+    return await handleStateError(error, state, lock, "status", { startedAt });
   } finally {
     if (lock) await lock.release();
   }
 }
 
 async function runReplay(options) {
+  const startedAt = new Date().toISOString();
   const state = resolveStateFromOptions(options);
   let lock;
   try {
@@ -140,7 +164,9 @@ async function runReplay(options) {
       mode: "replay",
       status: "replayed",
       exitCode: 0,
-      staleLockBreak: lock.staleBreak
+      staleLockBreak: lock.staleBreak,
+      lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+      startedAt
     }), {
       lock,
       operation: "write_watcher_status"
@@ -153,10 +179,960 @@ async function runReplay(options) {
     }));
     return 0;
   } catch (error) {
-    return await handleStateError(error, state, lock, "replay");
+    return await handleStateError(error, state, lock, "replay", { startedAt });
   } finally {
     if (lock) await lock.release();
   }
+}
+
+async function runSnapshot(options) {
+  const startedAt = new Date().toISOString();
+  const state = resolveStateFromOptions(options);
+  let lock;
+  let config = null;
+  let summary = null;
+  let exitCode = 0;
+
+  try {
+    lock = await acquireWatcherLock(state, "snapshot", options);
+    config = await requireSnapshotConfig(state);
+    validateSnapshotConfig(config);
+    await replayEvents(state);
+
+    await assertGhAuthenticated();
+
+    const snapshotResult = await collectSnapshot(config, options);
+    await writeSnapshotState(state, lock, snapshotResult, {
+      status: "snapshot_collected",
+      reason: null,
+      exitCode: 0,
+      startedAt
+    });
+
+    summary = snapshotSummary(state, config, snapshotResult, {
+      status: "snapshot_collected",
+      reason: null,
+      exitCode: 0
+    });
+    exitCode = 0;
+  } catch (error) {
+    if (error.code === "mergeability_unknown" && error.snapshotResult) {
+      try {
+        await writeSnapshotState(state, lock, error.snapshotResult, {
+          status: "blocked_mergeability_unknown",
+          reason: "mergeability_unknown",
+          exitCode: 20,
+          error,
+          startedAt
+        });
+        process.stderr.write(`${error.message}\n`);
+        summary = snapshotSummary(state, config, error.snapshotResult, {
+          status: "blocked_mergeability_unknown",
+          reason: "mergeability_unknown",
+          exitCode: 20,
+          error
+        });
+        exitCode = 20;
+      } catch (stateError) {
+        ({ summary, exitCode } = await snapshotErrorReport(stateError, state, lock, config, { startedAt }));
+      }
+    } else {
+      ({ summary, exitCode } = await snapshotErrorReport(error, state, lock, config, { startedAt }));
+    }
+  }
+
+  if (lock) {
+    try {
+      await lock.release();
+      lock = null;
+    } catch (releaseError) {
+      ({ summary, exitCode } = await snapshotErrorReport(releaseError, state, lock, config, { startedAt }));
+      lock = null;
+    }
+  }
+
+  writeSummary(summary);
+  return exitCode;
+}
+
+async function requireSnapshotConfig(state) {
+  const config = await loadConfig(state);
+  if (!config) {
+    throw new PrStateError(`Missing PR feedback config: ${state.paths.config}`, {
+      code: "configuration_missing",
+      file: state.paths.config,
+      exitCode: 20
+    });
+  }
+  return config;
+}
+
+function validateSnapshotConfig(config) {
+  const required = new Set(normalizedRequiredCheckContexts(config));
+  const reviewerContexts = reviewerCheckIdentities(config.external_reviewer);
+  const overlap = [...reviewerContexts].filter((identity) => required.has(identity));
+  if (overlap.length > 0) {
+    throw new ConfigurationError(
+      "config.json",
+      `external reviewer check identity also configured as required non-reviewer check: ${overlap.join(", ")}`
+    );
+  }
+}
+
+function reviewerCheckIdentities(reviewer) {
+  const identities = new Set();
+  if (typeof reviewer === "string" && reviewer.trim()) identities.add(reviewer.trim());
+  if (plainObject(reviewer)) {
+    for (const key of ["check_context", "context", "name", "login", "username", "app_slug", "slug"]) {
+      const value = reviewer[key];
+      if (typeof value === "string" && value.trim()) identities.add(value.trim());
+    }
+  }
+  return identities;
+}
+
+async function runGh(args) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timedOut = false;
+    let stdout = "";
+    let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    let killTimer = null;
+
+    const child = spawn("gh", args, {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    const timer = setTimeout(() => {
+      if (settled || timedOut) return;
+      timedOut = true;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, GH_TIMEOUT_KILL_GRACE_MS);
+    }, GH_COMMAND_TIMEOUT_MS);
+
+    child.stdout.on("data", (chunk) => {
+      const captured = appendBounded(stdout, chunk);
+      stdout = captured.value;
+      stdoutTruncated = stdoutTruncated || captured.truncated;
+    });
+    child.stderr.on("data", (chunk) => {
+      const captured = appendBounded(stderr, chunk);
+      stderr = captured.value;
+      stderrTruncated = stderrTruncated || captured.truncated;
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      const code = error.code === "ENOENT" ? "gh_unavailable" : "gh_spawn_failed";
+      reject(githubError(code, `Unable to execute gh: ${error.message}`, {
+        status: null,
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+        args
+      }));
+    });
+    child.on("close", (status, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (timedOut) {
+        reject(githubError("gh_command_timeout", `gh command timed out after ${GH_COMMAND_TIMEOUT_MS}ms`, {
+          status,
+          signal,
+          stdout,
+          stderr,
+          stdoutTruncated,
+          stderrTruncated,
+          args
+        }));
+        return;
+      }
+      resolve({
+        status,
+        signal,
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+        args
+      });
+    });
+  });
+}
+
+function appendBounded(current, chunk) {
+  const next = current + chunk.toString("utf8");
+  if (Buffer.byteLength(next, "utf8") <= GH_OUTPUT_LIMIT_BYTES) {
+    return { value: next, truncated: false };
+  }
+  return {
+    value: Buffer.from(next, "utf8").subarray(0, GH_OUTPUT_LIMIT_BYTES).toString("utf8"),
+    truncated: true
+  };
+}
+
+async function assertGhAuthenticated() {
+  const result = await runGh(["auth", "status", "--hostname", GITHUB_HOSTNAME]);
+  if (result.status !== 0) {
+    throw githubError("auth_failed", "gh auth status failed", result);
+  }
+}
+
+async function collectSnapshot(config, options) {
+  const startedAt = new Date().toISOString();
+  const attempts = [];
+  const retryDelayMs = options.mergeabilityRetryDelayMs ?? DEFAULT_MERGEABILITY_RETRY_DELAY_MS;
+  let normalized = null;
+
+  for (let attempt = 1; attempt <= MERGEABILITY_MAX_ATTEMPTS; attempt += 1) {
+    const response = await readSinglePrGraphql(config);
+    normalized = normalizePrSnapshotResponse(response, config, attempt, attempts);
+    attempts.push({
+      attempt,
+      head_sha: normalized.head_sha,
+      mergeable: normalized.mergeability.mergeable,
+      merge_state_status: normalized.mergeability.merge_state_status,
+      observed_at: normalized.collected_at
+    });
+
+    if (!mergeabilityIsUnknown(normalized.mergeability)) break;
+    if (attempt < MERGEABILITY_MAX_ATTEMPTS && retryDelayMs > 0) {
+      await sleep(retryDelayMs);
+    }
+  }
+
+  if (!normalized) {
+    throw githubError("malformed_github_data", "GitHub response did not produce a PR snapshot");
+  }
+
+  normalized.mergeability.attempts = attempts.length;
+  normalized.mergeability.retry_budget = MERGEABILITY_MAX_ATTEMPTS;
+  normalized.mergeability.attempt_history = attempts;
+  normalized.started_at = startedAt;
+  normalized.completed_at = new Date().toISOString();
+  normalized.timing.started_at = normalized.started_at;
+  normalized.timing.completed_at = normalized.completed_at;
+  normalized.snapshot_id = snapshotId(normalized);
+
+  if (mergeabilityIsUnknown(normalized.mergeability)) {
+    const error = new PrStateError("GitHub mergeability remained UNKNOWN after the retry budget", {
+      code: "mergeability_unknown",
+      exitCode: 20
+    });
+    error.snapshotResult = normalized;
+    throw error;
+  }
+
+  return normalized;
+}
+
+async function readSinglePrGraphql(config) {
+  const repo = repoParts(config.repo);
+  const prNumber = config.pr_number ?? config.prNumber;
+  const result = await runGh([
+    "api",
+    "graphql",
+    "--hostname",
+    GITHUB_HOSTNAME,
+    "-f",
+    `owner=${repo.owner}`,
+    "-f",
+    `name=${repo.name}`,
+    "-F",
+    `number=${prNumber}`,
+    "-f",
+    `query=${singlePrQuery()}`
+  ]);
+
+  if (result.status !== 0) {
+    throw classifyGhCommandFailure(result);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    throw githubError("malformed_github_data", `GitHub API returned malformed JSON: ${error.message}`, result);
+  }
+
+  const errors = Array.isArray(parsed.errors) ? parsed.errors : [];
+  if (errors.length > 0) {
+    throw graphqlErrorsFailure(errors, result, parsed);
+  }
+
+  return parsed;
+}
+
+function singlePrQuery() {
+  return `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        id
+        name
+        owner { login }
+        defaultBranchRef { name target { oid } }
+        url
+        pullRequest(number: $number) {
+          id
+          databaseId
+          number
+          state
+          isDraft
+          title
+          url
+          author { login }
+          baseRefName
+          baseRefOid
+          headRefName
+          headRefOid
+          createdAt
+          updatedAt
+          mergeable
+          mergeStateStatus
+          statusCheckRollup {
+            contexts(first: 100) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                __typename
+                ... on CheckRun {
+                  id
+                  databaseId
+                  name
+                  status
+                  conclusion
+                  url
+                  detailsUrl
+                  startedAt
+                  completedAt
+                  checkSuite {
+                    commit { oid }
+                    workflowRun { headSha }
+                    app {
+                      databaseId
+                      slug
+                      name
+                      owner { login }
+                    }
+                  }
+                }
+                ... on StatusContext {
+                  id
+                  context
+                  state
+                  targetUrl
+                  createdAt
+                  updatedAt
+                  creator { login }
+                }
+              }
+            }
+          }
+        }
+      }
+      rateLimit {
+        limit
+        remaining
+        resetAt
+        used
+      }
+    }
+  `;
+}
+
+function normalizePrSnapshotResponse(response, config, attempt, priorAttempts) {
+  const repoConfig = repoParts(config.repo);
+  const data = response?.data;
+  if (!plainObject(data)) {
+    throw githubError("malformed_github_data", "GitHub response missing data object", null, response);
+  }
+
+  const repository = data.repository;
+  if (repository === null) {
+    throw githubError("repo_not_found", `Repository not found: ${repoConfig.owner}/${repoConfig.name}`, null, response);
+  }
+  if (!plainObject(repository)) {
+    throw githubError("malformed_github_data", "GitHub response missing repository object", null, response);
+  }
+  const repositoryOwner = requireString(repository.owner?.login, "repository.owner.login");
+  const repositoryName = requireString(repository.name, "repository.name");
+  if (repoIdentityKey(repositoryOwner) !== repoIdentityKey(repoConfig.owner) ||
+      repoIdentityKey(repositoryName) !== repoIdentityKey(repoConfig.name)) {
+    throw githubError("malformed_github_data", "GitHub repository identity did not match config", null, response);
+  }
+
+  const pr = repository.pullRequest;
+  if (pr === null) {
+    throw githubError("pr_not_found", `Pull request not found: ${repoConfig.owner}/${repoConfig.name}#${config.pr_number ?? config.prNumber}`, null, response);
+  }
+  if (!plainObject(pr)) {
+    throw githubError("malformed_github_data", "GitHub response missing pullRequest object", null, response);
+  }
+
+  const headSha = requireString(pr.headRefOid, "pullRequest.headRefOid");
+  if (config.expected_head_sha !== undefined && config.expected_head_sha !== headSha) {
+    const error = new PrStateError(`Snapshot head ${headSha} does not match expected head ${config.expected_head_sha}`, {
+      code: "blocked_stale_head",
+      exitCode: 20
+    });
+    error.expectedHeadSha = config.expected_head_sha;
+    error.actualHeadSha = headSha;
+    throw error;
+  }
+  const baseOid = optionalString(pr.baseRefOid);
+  const collectedAt = new Date().toISOString();
+  const requiredContexts = normalizedRequiredCheckContexts(config);
+  const normalizedContexts = normalizeCheckContexts(pr.statusCheckRollup, headSha);
+  const checkAggregate = aggregateChecks(requiredContexts, normalizedContexts);
+  const prNumber = requireNumber(pr.number, "pullRequest.number");
+  if (prNumber !== (config.pr_number ?? config.prNumber)) {
+    throw githubError("malformed_github_data", "GitHub pullRequest number did not match config", null, response);
+  }
+
+  return {
+    schema_version: PR_STATE_SCHEMA_VERSION,
+    mode: "snapshot",
+    snapshot_id: null,
+    status: "snapshot_collected",
+    reason: null,
+    source: {
+      adapter: "gh",
+      hostname: GITHUB_HOSTNAME,
+      read: "single_pr_graphql",
+      attempt
+    },
+    team: config.team,
+    repo: `${repositoryOwner}/${repositoryName}`,
+    repository: {
+      owner: repositoryOwner,
+      name: repositoryName,
+      id: optionalString(repository.id),
+      default_branch: optionalString(repository.defaultBranchRef?.name),
+      default_branch_oid: optionalString(repository.defaultBranchRef?.target?.oid),
+      url: optionalString(repository.url)
+    },
+    pr: {
+      number: prNumber,
+      node_id: requireString(pr.id, "pullRequest.id"),
+      database_id: optionalNumber(pr.databaseId),
+      state: requireString(pr.state, "pullRequest.state"),
+      is_draft: requireBoolean(pr.isDraft, "pullRequest.isDraft"),
+      title: optionalString(pr.title),
+      url: requireString(pr.url, "pullRequest.url"),
+      author: {
+        login: optionalString(pr.author?.login)
+      },
+      base: {
+        ref: requireString(pr.baseRefName, "pullRequest.baseRefName"),
+        oid: baseOid
+      },
+      head: {
+        ref: requireString(pr.headRefName, "pullRequest.headRefName"),
+        oid: headSha
+      },
+      created_at: requireTimestamp(pr.createdAt, "pullRequest.createdAt"),
+      updated_at: requireTimestamp(pr.updatedAt, "pullRequest.updatedAt")
+    },
+    head_sha: headSha,
+    mergeability: {
+      source: "single_pr_graphql",
+      mergeable: pr.mergeable ?? null,
+      merge_state_status: pr.mergeStateStatus ?? null,
+      attempts: priorAttempts.length + 1,
+      retry_budget: MERGEABILITY_MAX_ATTEMPTS,
+      attempt_history: [],
+      observed_at: collectedAt
+    },
+    checks: {
+      source: "statusCheckRollup",
+      aggregate: checkAggregate.aggregate,
+      required_contexts: [...requiredContexts],
+      missing_required_contexts: checkAggregate.missing,
+      contexts: normalizedContexts
+    },
+    github: {
+      rate_limit: normalizeRateLimit(data.rateLimit),
+      api_errors: normalizeApiErrors(response.errors)
+    },
+    timing: {
+      collected_at: collectedAt,
+      started_at: null,
+      completed_at: null
+    },
+    collected_at: collectedAt,
+    started_at: null,
+    completed_at: null
+  };
+}
+
+function normalizeCheckContexts(statusCheckRollup, headSha) {
+  if (statusCheckRollup === null) return [];
+  if (!plainObject(statusCheckRollup) || !plainObject(statusCheckRollup.contexts)) {
+    throw githubError("malformed_github_data", "GitHub response missing complete statusCheckRollup contexts");
+  }
+  if (!plainObject(statusCheckRollup.contexts.pageInfo) ||
+      statusCheckRollup.contexts.pageInfo.hasNextPage !== false) {
+    throw githubError("github_collection_incomplete", "GitHub statusCheckRollup collection is incomplete");
+  }
+  const nodes = statusCheckRollup.contexts.nodes;
+  if (!Array.isArray(nodes)) {
+    throw githubError("malformed_github_data", "GitHub response statusCheckRollup contexts.nodes must be an array");
+  }
+
+  return nodes
+    .map((node) => normalizeCheckContext(node, headSha))
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.source_kind.localeCompare(b.source_kind));
+}
+
+function normalizeCheckContext(node, headSha) {
+  if (!plainObject(node)) throw githubError("malformed_github_data", "GitHub statusCheckRollup node must be an object");
+  if (node.__typename === "CheckRun") {
+    const workflowHeadSha = optionalString(node.checkSuite?.workflowRun?.headSha);
+    const suiteCommitOid = optionalString(node.checkSuite?.commit?.oid);
+    const contextHeadSha = workflowHeadSha ?? suiteCommitOid;
+    const headSource = workflowHeadSha ? "workflow_run" : suiteCommitOid ? "check_suite_commit" : null;
+    const name = optionalString(node.name);
+    if (!name) throw githubError("malformed_github_data", "GitHub CheckRun missing name");
+    const isCurrentHead = contextHeadSha === headSha;
+    return {
+      source_kind: "check_run",
+      id: optionalString(node.id),
+      node_id: optionalString(node.id),
+      database_id: optionalNumber(node.databaseId),
+      name,
+      context: name,
+      status: normalizeUpper(node.status),
+      conclusion: normalizeUpper(node.conclusion),
+      state: checkRunGateState(node),
+      app: normalizeApp(node.checkSuite?.app),
+      source: normalizeApp(node.checkSuite?.app),
+      url: optionalString(node.detailsUrl) ?? optionalString(node.url),
+      started_at: optionalTimestamp(node.startedAt),
+      completed_at: optionalTimestamp(node.completedAt),
+      head_sha: contextHeadSha,
+      head_source: headSource,
+      is_current_head: isCurrentHead
+    };
+  }
+
+  if (node.__typename === "StatusContext") {
+    const context = optionalString(node.context);
+    if (!context) return null;
+    return {
+      source_kind: "status_context",
+      id: optionalString(node.id),
+      name: context,
+      context,
+      status: normalizeUpper(node.state),
+      conclusion: null,
+      state: statusContextGateState(node),
+      app: null,
+      source: {
+        login: optionalString(node.creator?.login)
+      },
+      url: optionalString(node.targetUrl),
+      started_at: optionalTimestamp(node.createdAt),
+      completed_at: optionalTimestamp(node.updatedAt),
+      head_sha: headSha,
+      is_current_head: true
+    };
+  }
+
+  throw githubError("malformed_github_data", `Unsupported GitHub statusCheckRollup node type: ${node.__typename}`);
+}
+
+function aggregateChecks(requiredContexts, contexts) {
+  if (!requiredContexts || requiredContexts.length === 0) {
+    return {
+      aggregate: "checks_not_required",
+      missing: []
+    };
+  }
+
+  const byName = new Map();
+  for (const context of contexts.filter((entry) => entry.is_current_head)) {
+    const key = context.context ?? context.name;
+    const prior = byName.get(key);
+    if (!prior || checkSeverity(context.state) > checkSeverity(prior.state)) {
+      byName.set(key, context);
+    }
+  }
+
+  const missing = requiredContexts.filter((context) => !byName.has(context));
+  if (missing.length > 0) {
+    return {
+      aggregate: "checks_missing",
+      missing
+    };
+  }
+
+  const required = requiredContexts.map((context) => byName.get(context));
+  if (required.some((context) => context.state === "failed")) return { aggregate: "checks_failed", missing: [] };
+  if (required.some((context) => context.state === "pending")) return { aggregate: "checks_pending", missing: [] };
+  return { aggregate: "checks_green", missing: [] };
+}
+
+function checkRunGateState(node) {
+  const conclusion = normalizeUpper(node.conclusion);
+  const status = normalizeUpper(node.status);
+  if (status && status !== "COMPLETED") return "pending";
+  if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(conclusion)) return "green";
+  if (["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"].includes(conclusion)) return "failed";
+  if (!conclusion) return "pending";
+  return "failed";
+}
+
+function statusContextGateState(node) {
+  const state = normalizeUpper(node.state);
+  if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) return "green";
+  if (["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"].includes(state)) return "failed";
+  return "pending";
+}
+
+function checkSeverity(state) {
+  if (state === "failed") return 3;
+  if (state === "pending") return 2;
+  if (state === "green") return 1;
+  return 0;
+}
+
+async function writeSnapshotState(state, lock, snapshotResult, {
+  status,
+  reason,
+  exitCode,
+  error = null,
+  startedAt = null
+}) {
+  snapshotResult.status = status;
+  snapshotResult.reason = reason;
+  snapshotResult.timing.started_at = snapshotResult.started_at;
+  snapshotResult.timing.completed_at = snapshotResult.completed_at;
+
+  const snapshotPath = `snapshots/${snapshotResult.snapshot_id}.json`;
+  await assertPrStateWritable(state, "watcher", snapshotPath, { lock });
+  await assertPrStateWritable(state, "watcher", "latest-snapshot.json", { lock });
+  await assertPrStateWritable(state, "watcher", "watcher-status.json", { lock });
+
+  await writePrStateJson(state, "watcher", `snapshots/${snapshotResult.snapshot_id}.json`, snapshotResult, {
+    lock,
+    operation: "write_snapshot",
+    noOverwrite: true
+  });
+  await writePrStateJson(state, "watcher", "latest-snapshot.json", snapshotResult, {
+    lock,
+    operation: "write_latest_snapshot"
+  });
+  await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatusRecord({
+    mode: "snapshot",
+    status,
+    reason,
+    exitCode,
+    error,
+    staleLockBreak: lock.staleBreak,
+    lastSuccessfulSnapshotId: status === "snapshot_collected"
+      ? snapshotResult.snapshot_id
+      : await previousSuccessfulSnapshotId(state),
+    startedAt
+  }), {
+    lock,
+    operation: "write_watcher_status"
+  });
+}
+
+async function snapshotErrorReport(error, state, lock, config, { startedAt = null } = {}) {
+  let reportedError = error;
+  let exitCode = exitCodeForError(reportedError);
+  let reason = reasonForError(reportedError);
+  process.stderr.write(`${error.message}\n`);
+
+  if (lock && reason !== "lock_busy") {
+    try {
+      await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatusRecord({
+        mode: "snapshot",
+        status: statusForSnapshotFailure(reason),
+        reason,
+        exitCode,
+        error: reportedError,
+        staleLockBreak: lock.staleBreak,
+        lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+        startedAt
+      }), {
+        lock,
+        operation: "write_watcher_status"
+      });
+    } catch (statusError) {
+      process.stderr.write(`Failed to write watcher-status.json: ${statusError.message}\n`);
+      reportedError = statusError;
+      exitCode = exitCodeForError(reportedError);
+      reason = reasonForError(reportedError);
+    }
+  }
+
+  return {
+    summary: snapshotFailureSummary(state, config, reportedError, { exitCode, reason }),
+    exitCode
+  };
+}
+
+function snapshotFailureSummary(state, config, error, { exitCode, reason }) {
+  return {
+    ...baseSummary(state, config, {
+      mode: "snapshot",
+      status: statusForSnapshotFailure(reason),
+      reason
+    }),
+    file: error.file ?? null,
+    exit_code: exitCode,
+    expected_head_sha: error.expectedHeadSha ?? null,
+    actual_head_sha: error.actualHeadSha ?? null,
+    github_error: error.githubMetadata ?? null
+  };
+}
+
+function statusForSnapshotFailure(reason) {
+  if (reason === "blocked_stale_head") return "blocked_stale_head";
+  return "blocked_watcher_unavailable";
+}
+
+function snapshotSummary(state, config, snapshotResult, { status, reason, exitCode, error = null }) {
+  return {
+    ...baseSummary(state, config, {
+      mode: "snapshot",
+      status,
+      reason
+    }),
+    repo: snapshotResult.repo,
+    current_head_sha: snapshotResult.head_sha,
+    snapshot_id: snapshotResult.snapshot_id,
+    check_aggregate: snapshotResult.checks.aggregate,
+    mergeability: snapshotResult.mergeability,
+    exit_code: exitCode,
+    github_error: error?.githubMetadata ?? null
+  };
+}
+
+function classifyGhCommandFailure(result) {
+  const text = `${result.stderr}\n${result.stdout}`;
+  const lower = text.toLowerCase();
+  if (/\b401\b|bad credentials|authentication failed|requires authentication/.test(lower)) {
+    return githubError("auth_failed", "GitHub API authentication failed after auth status succeeded", result);
+  }
+  if (/rate.?limit|secondary rate limit|api rate limit exceeded/.test(lower)) {
+    return githubError("github_rate_limited", "GitHub API rate limit prevented trusted collection", result);
+  }
+  if (/could not resolve host|failed to connect|connection reset|connection refused|timed out|timeout|tls|ssl|502|503|504|bad gateway|service unavailable/.test(lower)) {
+    return githubError("network_error", "GitHub API network transport failed", result);
+  }
+  if (/\b403\b|forbidden|resource not accessible|insufficient.+scope|permission/.test(lower)) {
+    return githubError("permission_denied", "GitHub API permission denied", result);
+  }
+  if (/repository.+not found|could not resolve to a repository/.test(lower)) {
+    return githubError("repo_not_found", "GitHub repository was not found", result);
+  }
+  if (/pull.?request.+not found|could not resolve to a pullrequest|not found/.test(lower)) {
+    return githubError("pr_not_found", "GitHub pull request was not found", result);
+  }
+  return githubError("network_error", "GitHub API command failed", result);
+}
+
+function graphqlErrorsFailure(errors, result, response) {
+  const text = errors.map((entry) => githubErrorText(entry)).join("\n");
+  const lower = text.toLowerCase();
+  if (errors.some((entry) => entry?.type === "RATE_LIMITED") || /rate.?limit|secondary rate limit/.test(lower)) {
+    return githubError("github_rate_limited", "GitHub API rate limit prevented trusted collection", result, response);
+  }
+  if (/\b401\b|bad credentials|authentication failed|requires authentication/.test(lower)) {
+    return githubError("auth_failed", "GitHub API authentication failed after auth status succeeded", result, response);
+  }
+  if (/\b403\b|forbidden|resource not accessible|insufficient.+scope|permission/.test(lower)) {
+    return githubError("permission_denied", "GitHub API permission denied", result, response);
+  }
+  if (/repository/.test(lower) && /not_found|not found|could not resolve/.test(lower)) {
+    return githubError("repo_not_found", "GitHub repository was not found", result, response);
+  }
+  if (/pull.?request|pullrequest/.test(lower) && /not_found|not found|could not resolve/.test(lower)) {
+    return githubError("pr_not_found", "GitHub pull request was not found", result, response);
+  }
+  return githubError("malformed_github_data", "GitHub GraphQL response included errors with partial data", result, response);
+}
+
+function githubErrorText(error) {
+  if (typeof error === "string") return error;
+  if (plainObject(error)) return JSON.stringify(error);
+  return String(error);
+}
+
+function githubError(code, message, result = null, response = null) {
+  const error = new PrStateError(message, {
+    code,
+    exitCode: 20
+  });
+  error.githubMetadata = {
+    status: result?.status ?? null,
+    signal: result?.signal ?? null,
+    stdout_truncated: Boolean(result?.stdoutTruncated),
+    stderr_truncated: Boolean(result?.stderrTruncated),
+    stdout_excerpt: boundedDiagnostic(result?.stdout ?? ""),
+    stderr_excerpt: boundedDiagnostic(result?.stderr ?? ""),
+    api_errors: normalizeApiErrors(response?.errors),
+    rate_limit: normalizeRateLimit(response?.data?.rateLimit ?? response?.rateLimit)
+  };
+  return error;
+}
+
+function repoParts(repo) {
+  if (typeof repo === "string") {
+    const [owner, name] = repo.split("/");
+    return { owner, name };
+  }
+  return {
+    owner: repo.owner,
+    name: repo.name
+  };
+}
+
+function repoIdentityKey(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function mergeabilityIsUnknown(mergeability) {
+  const mergeable = normalizeUpper(mergeability.mergeable);
+  const mergeStateStatus = normalizeUpper(mergeability.merge_state_status);
+  return !mergeable ||
+    !mergeStateStatus ||
+    mergeable === "UNKNOWN" ||
+    mergeStateStatus === "UNKNOWN";
+}
+
+function snapshotId(snapshot) {
+  const time = (snapshot.completed_at ?? new Date().toISOString()).replace(/[^0-9A-Za-z]+/g, "-").replace(/-$/u, "");
+  const head = snapshot.head_sha.replace(/[^0-9A-Za-z]+/g, "").slice(0, 16);
+  return `${time}-pr-${snapshot.pr.number}-${head}-${randomUUID().slice(0, 12)}`;
+}
+
+function requireString(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw githubError("malformed_github_data", `GitHub response missing required string ${label}`);
+  }
+  return value;
+}
+
+function requireNumber(value, label) {
+  if (!Number.isSafeInteger(value)) {
+    throw githubError("malformed_github_data", `GitHub response missing required number ${label}`);
+  }
+  return value;
+}
+
+function requireBoolean(value, label) {
+  if (typeof value !== "boolean") {
+    throw githubError("malformed_github_data", `GitHub response missing required boolean ${label}`);
+  }
+  return value;
+}
+
+function requireTimestamp(value, label) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    throw githubError("malformed_github_data", `GitHub response missing required timestamp ${label}`);
+  }
+  return value;
+}
+
+function optionalString(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function optionalNumber(value) {
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function optionalTimestamp(value) {
+  if (value === null || value === undefined) return null;
+  return requireTimestamp(value, "optional timestamp");
+}
+
+function normalizeApp(app) {
+  if (!plainObject(app)) return null;
+  return {
+    id: optionalNumber(app.databaseId),
+    slug: optionalString(app.slug),
+    name: optionalString(app.name),
+    owner: {
+      login: optionalString(app.owner?.login)
+    }
+  };
+}
+
+function normalizeRateLimit(rateLimit) {
+  if (!plainObject(rateLimit)) return null;
+  return {
+    limit: optionalNumber(rateLimit.limit),
+    remaining: optionalNumber(rateLimit.remaining),
+    used: optionalNumber(rateLimit.used),
+    reset_at: optionalTimestamp(rateLimit.resetAt)
+  };
+}
+
+function normalizeApiErrors(errors) {
+  if (!Array.isArray(errors)) return [];
+  return errors.map((entry) => {
+    if (!plainObject(entry)) return { message: boundedDiagnostic(String(entry)) };
+    return {
+      type: optionalString(entry.type),
+      message: boundedDiagnostic(entry.message ?? githubErrorText(entry)),
+      path: Array.isArray(entry.path) ? entry.path.map((part) => String(part)) : null
+    };
+  });
+}
+
+function normalizeUpper(value) {
+  if (value === null || value === undefined) return null;
+  return String(value).trim().replace(/[-\s]+/g, "_").toUpperCase();
+}
+
+function normalizedRequiredCheckContexts(config) {
+  return [...new Set((config.required_check_contexts ?? []).map((context) => context.trim()))];
+}
+
+async function previousSuccessfulSnapshotId(state) {
+  const status = await readOptionalJson(state, "watcher-status.json").catch(() => null);
+  return typeof status?.last_successful_snapshot_id === "string"
+    ? status.last_successful_snapshot_id
+    : null;
+}
+
+function boundedDiagnostic(value) {
+  const text = redactDiagnostic(String(value ?? "").replace(/\s+/g, " ").trim());
+  if (text.length <= DIAGNOSTIC_LIMIT_CHARS) return text;
+  return `${text.slice(0, DIAGNOSTIC_LIMIT_CHARS)}...<truncated>`;
+}
+
+function redactDiagnostic(value) {
+  return String(value)
+    .replace(/github_pat_[A-Za-z0-9_]{10,}/gu, "[REDACTED]")
+    .replace(/gh[pousr]_[A-Za-z0-9_]{10,}/gu, "[REDACTED]")
+    .replace(/\b(authorization|bearer|token)\s*[:=]\s*[^\s,;]+/giu, "$1 [REDACTED]")
+    .replace(/(https?:\/\/)([^:@/\s]+):([^@/\s]+)@/giu, "$1[REDACTED]@");
+}
+
+function envPositiveInteger(name, fallback) {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : fallback;
 }
 
 function parseArgs(args) {
@@ -189,6 +1165,7 @@ function parseArgs(args) {
     else if (key === "pr") options.pr = value;
     else if (key === "lock-timeout-ms") options.lockTimeoutMs = parseNonNegativeInteger(value, arg);
     else if (key === "lock-stale-ms") options.lockStaleMs = parsePositiveInteger(value, arg);
+    else if (key === "mergeability-retry-delay-ms") options.mergeabilityRetryDelayMs = parseNonNegativeInteger(value, arg);
     else {
       throw new PrStateError(`Unknown option ${arg}`, {
         code: "usage",
@@ -250,7 +1227,7 @@ async function acquireWatcherLock(state, mode, options) {
   });
 }
 
-async function handleStateError(error, state, lock, mode) {
+async function handleStateError(error, state, lock, mode, { startedAt = null } = {}) {
   const exitCode = exitCodeForError(error);
   const reason = reasonForError(error);
   process.stderr.write(`${error.message}\n`);
@@ -262,7 +1239,9 @@ async function handleStateError(error, state, lock, mode) {
       reason,
       exitCode,
       error,
-      staleLockBreak: lock.staleBreak
+      staleLockBreak: lock.staleBreak,
+      lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+      startedAt
     }), {
       lock,
       operation: "write_watcher_status"
@@ -343,29 +1322,47 @@ function errorSummary(state, { mode, status, reason, exitCode, error }) {
   };
 }
 
-function watcherStatusRecord({ mode, status, reason = null, exitCode, error = null, staleLockBreak = null }) {
+function watcherStatusRecord({
+  mode,
+  status,
+  reason = null,
+  exitCode,
+  error = null,
+  staleLockBreak = null,
+  lastSuccessfulSnapshotId = null,
+  startedAt = null
+}) {
   const now = new Date().toISOString();
   return {
     schema_version: PR_STATE_SCHEMA_VERSION,
     mode,
     status,
     reason,
-    started_at: now,
+    started_at: startedAt ?? now,
     completed_at: now,
-    last_successful_snapshot_id: null,
-    last_error: error ? {
-      reason: reasonForError(error),
-      message: error.message,
-      file: error.file ?? null
-    } : null,
+    last_successful_snapshot_id: lastSuccessfulSnapshotId,
+    last_error: error ? lastErrorRecord(error) : null,
     stale_lock_break: staleLockBreak,
     exit_code: exitCode
   };
 }
 
+function lastErrorRecord(error) {
+  const record = {
+    reason: reasonForError(error),
+    message: boundedDiagnostic(error.message),
+    file: error.file ?? null
+  };
+  if (error.expectedHeadSha !== undefined) record.expected_head_sha = error.expectedHeadSha;
+  if (error.actualHeadSha !== undefined) record.actual_head_sha = error.actualHeadSha;
+  if (error.githubMetadata) record.github = error.githubMetadata;
+  return record;
+}
+
 function reasonForError(error) {
   if (error instanceof LockBusyError || error.code === "lock_busy") return "lock_busy";
   if (error instanceof CorruptStateError || error.code === "corrupt_state") return "corrupt_state";
+  if (error instanceof ConfigurationMissingError || error.code === "configuration_missing") return "configuration_missing";
   if (error instanceof ConfigurationError || error.code === "configuration_invalid") return "configuration_invalid";
   if (error.code === "usage") return "usage";
   return error.code ?? "state_error";
