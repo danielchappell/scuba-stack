@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 
 const USAGE = `Usage:
-  node scripts/audit-codex-jsonl.mjs <root-thread-id> [--codex-home <path>] [--out <path>]
+  node scripts/audit-codex-jsonl.mjs <root-thread-id> [--codex-home <path>] [--out <path>] [--acceptance] [--require-subagents] [--require-subagent-metadata]
   node scripts/audit-codex-jsonl.mjs --list-recent [--codex-home <path>]
 
 Audits Codex Desktop/CLI JSONL session logs by building a parent/subagent tree.
-The default report uses operational metadata, not raw transcript or reasoning text.`;
+The default report uses operational metadata, not raw transcript or reasoning text.
+Acceptance mode writes the same report, then exits nonzero for blocking proof gaps.`;
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -83,12 +84,30 @@ if (args.out) {
   process.stdout.write(report);
 }
 
+if (args.acceptance) {
+  const failures = collectAcceptanceFailures({
+    sessions: selected,
+    rootThreadId: args.rootThreadId,
+    byId,
+    requireSubagents: args.requireSubagents,
+    requireSubagentMetadata: args.requireSubagentMetadata
+  });
+  if (failures.length > 0) {
+    console.error("Codex JSONL audit acceptance failed:");
+    for (const failure of failures) console.error(`- ${failure}`);
+    process.exit(2);
+  }
+}
+
 function parseArgs(argv) {
   const parsed = {
+    acceptance: false,
     codexHome: process.env.CODEX_HOME || undefined,
     help: false,
     listRecent: false,
     out: undefined,
+    requireSubagents: false,
+    requireSubagentMetadata: false,
     rootThreadId: undefined
   };
 
@@ -96,8 +115,14 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       parsed.help = true;
+    } else if (arg === "--acceptance") {
+      parsed.acceptance = true;
     } else if (arg === "--list-recent") {
       parsed.listRecent = true;
+    } else if (arg === "--require-subagents") {
+      parsed.requireSubagents = true;
+    } else if (arg === "--require-subagent-metadata") {
+      parsed.requireSubagentMetadata = true;
     } else if (arg === "--codex-home") {
       parsed.codexHome = requireValue(argv, ++i, arg);
     } else if (arg === "--out") {
@@ -443,10 +468,10 @@ function collectGaps(sessions, rootThreadId, byId) {
     if (session.parseErrors > 0) {
       gaps.push(`${shortId(session.id)} has ${session.parseErrors} JSON parse error(s).`);
     }
-    if (session.threadSource === "subagent" && !session.parentId) {
+    if (isSubagentSession(session, rootThreadId) && !session.parentId) {
       gaps.push(`${shortId(session.id)} is a subagent session with no parent id.`);
     }
-    if (session.threadSource === "subagent" && !session.agentNickname && !session.agentRole && !session.agentPath) {
+    if (isSubagentSession(session, rootThreadId) && !session.agentNickname && !session.agentRole && !session.agentPath) {
       gaps.push(`${shortId(session.id)} is a subagent session without nickname, role, or agent path metadata.`);
     }
     if (session.taskStarted > session.taskComplete + session.taskAborted) {
@@ -454,6 +479,42 @@ function collectGaps(sessions, rootThreadId, byId) {
     }
   }
   return gaps;
+}
+
+function collectAcceptanceFailures({ sessions, rootThreadId, byId, requireSubagents, requireSubagentMetadata }) {
+  const failures = [];
+  if (!byId.has(rootThreadId)) {
+    failures.push(`Missing root session JSONL for \`${rootThreadId}\`.`);
+  }
+
+  const subagents = sessions.filter((session) => isSubagentSession(session, rootThreadId));
+  if (requireSubagents && subagents.length === 0) {
+    failures.push("No subagent session metadata was found for the requested proof claim.");
+  }
+
+  for (const session of sessions) {
+    if (session.parseErrors > 0) {
+      failures.push(`${shortId(session.id)} has ${session.parseErrors} JSON parse error(s).`);
+    }
+    if (session.taskStarted > session.taskComplete + session.taskAborted) {
+      failures.push(`${shortId(session.id)} has ${session.taskStarted} task start(s) but only ${session.taskComplete} complete and ${session.taskAborted} aborted event(s).`);
+    }
+    if (requireSubagentMetadata && isSubagentSession(session, rootThreadId)) {
+      if (!session.parentId) {
+        failures.push(`${shortId(session.id)} is a subagent session with no parent id.`);
+      }
+      if (!session.agentNickname && !session.agentRole && !session.agentPath) {
+        failures.push(`${shortId(session.id)} is a subagent session without nickname, role, or agent path metadata.`);
+      }
+    }
+  }
+
+  return failures;
+}
+
+function isSubagentSession(session, rootThreadId) {
+  return session.id !== rootThreadId &&
+    (session.threadSource === "subagent" || session.source === "subagent" || Boolean(session.parentId));
 }
 
 function sessionLabel(session) {

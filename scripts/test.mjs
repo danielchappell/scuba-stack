@@ -688,6 +688,146 @@ test("installer syntax and Claude hook fixture pass", async () => {
   await run("bash", ["hooks/test-codex-scuba-guard.sh"]);
 });
 
+test("Codex JSONL audit acceptance gates operational proof", async () => {
+  await withTempDir("codex-jsonl-audit", async (tmp) => {
+    const cleanHome = path.join(tmp, "clean-home");
+    await writeCodexAuditFixture(cleanHome, [
+      {
+        id: "root-clean-session",
+        threadName: "Scuba root",
+        lines: [
+          sessionMeta("root-clean-session", {
+            cwd: "/repo",
+            thread_source: "root",
+            source: "codex"
+          }),
+          responseItem("reasoning", { summary: "PRIVATE_REASONING_SHOULD_NOT_APPEAR" }),
+          responseItem("function_call", {
+            name: "exec_command",
+            arguments: "touch /repo/.scuba/teams/scuba-reliability/s07-status.md"
+          }),
+          responseItem("custom_tool_call", {
+            name: "read_file",
+            input: "/Users/example/.agents/skills/scuba/SKILL.md"
+          })
+        ]
+      },
+      {
+        id: "child-worker-session",
+        threadName: "Worker",
+        lines: [
+          sessionMeta("child-worker-session", {
+            parent_thread_id: "root-clean-session",
+            thread_source: "subagent",
+            agent_nickname: "s07-worker",
+            agent_role: "senior-implementer",
+            cwd: "/repo/.codex/worktrees/scuba-reliability-s07-codex-proof",
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: "root-clean-session",
+                  agent_nickname: "s07-worker",
+                  agent_role: "senior-implementer",
+                  agent_path: "agents/senior-implementer.md"
+                }
+              }
+            }
+          }),
+          eventMsg("task_started"),
+          eventMsg("task_complete", { duration_ms: 42 }),
+          responseItem("function_call", {
+            name: "apply_patch",
+            arguments: "write /repo/.codex/worktrees/scuba-reliability-s07-codex-proof/scripts/test.mjs"
+          }),
+          responseItem("message", { text: "DO_NOT_LEAK_TRANSCRIPT_CONTENT" })
+        ]
+      }
+    ]);
+
+    const cleanOut = path.join(tmp, "clean-report.md");
+    const clean = await runAudit("root-clean-session", cleanHome, cleanOut, ["--acceptance", "--require-subagents", "--require-subagent-metadata"]);
+    assert.equal(clean.status, 0, clean.stderr);
+    const cleanReport = await readFile(cleanOut, "utf8");
+    assert.match(cleanReport, /Sessions in tree: 2/);
+    assert.match(cleanReport, /\.scuba\/teams\/scuba-reliability\/s07-status\.md/);
+    assert.match(cleanReport, /\.codex\/worktrees\/scuba-reliability-s07-codex-proof/);
+    assert.match(cleanReport, /`scuba`/);
+    assert.doesNotMatch(cleanReport, /DO_NOT_LEAK_TRANSCRIPT_CONTENT/);
+    assert.doesNotMatch(cleanReport, /PRIVATE_REASONING_SHOULD_NOT_APPEAR/);
+
+    const parseHome = path.join(tmp, "parse-home");
+    await writeCodexAuditFixture(parseHome, [
+      {
+        id: "root-parse-session",
+        lines: [
+          sessionMeta("root-parse-session"),
+          "{not valid json",
+          eventMsg("task_started"),
+          eventMsg("task_complete")
+        ]
+      }
+    ]);
+    const parseOut = path.join(tmp, "parse-report.md");
+    const parse = await runAudit("root-parse-session", parseHome, parseOut, ["--acceptance"]);
+    assert.notEqual(parse.status, 0);
+    assert.match(await readFile(parseOut, "utf8"), /JSON parse error/);
+
+    const unreconciledHome = path.join(tmp, "unreconciled-home");
+    await writeCodexAuditFixture(unreconciledHome, [
+      {
+        id: "root-unreconciled-session",
+        lines: [
+          sessionMeta("root-unreconciled-session"),
+          eventMsg("task_started")
+        ]
+      }
+    ]);
+    const unreconciledOut = path.join(tmp, "unreconciled-report.md");
+    const unreconciled = await runAudit("root-unreconciled-session", unreconciledHome, unreconciledOut, ["--acceptance"]);
+    assert.notEqual(unreconciled.status, 0);
+    assert.match(await readFile(unreconciledOut, "utf8"), /task start\(s\) but only 0 complete and 0 aborted/);
+
+    const missingRootHome = path.join(tmp, "missing-root-home");
+    await writeCodexAuditFixture(missingRootHome, [
+      {
+        id: "orphan-worker-session",
+        lines: [
+          sessionMeta("orphan-worker-session", {
+            parent_thread_id: "missing-root-session",
+            thread_source: "subagent",
+            agent_role: "senior-implementer"
+          })
+        ]
+      }
+    ]);
+    const missingRootOut = path.join(tmp, "missing-root-report.md");
+    const missingRoot = await runAudit("missing-root-session", missingRootHome, missingRootOut, ["--acceptance"]);
+    assert.notEqual(missingRoot.status, 0);
+    assert.match(await readFile(missingRootOut, "utf8"), /No JSONL session file was found for root thread `missing-root-session`/);
+
+    const metadataHome = path.join(tmp, "metadata-home");
+    await writeCodexAuditFixture(metadataHome, [
+      {
+        id: "root-metadata-session",
+        lines: [sessionMeta("root-metadata-session")]
+      },
+      {
+        id: "child-metadata-gap",
+        lines: [
+          sessionMeta("child-metadata-gap", {
+            parent_thread_id: "root-metadata-session",
+            thread_source: "subagent"
+          })
+        ]
+      }
+    ]);
+    const metadataOut = path.join(tmp, "metadata-report.md");
+    const metadata = await runAudit("root-metadata-session", metadataHome, metadataOut, ["--acceptance", "--require-subagent-metadata"]);
+    assert.notEqual(metadata.status, 0);
+    assert.match(await readFile(metadataOut, "utf8"), /subagent session without nickname, role, or agent path metadata/);
+  });
+});
+
 function test(name, fn) {
   tests.push({ name, fn });
 }
@@ -809,6 +949,61 @@ async function assertCodexInstallWithInvalidHookConfig(home) {
 
   assert.equal(await readFile(path.join(home, ".codex", "hooks.json"), "utf8"), "{ not json\n");
   assert.ok(existsSync(path.join(home, ".codex", "hooks", "scuba-guard.sh")));
+}
+
+async function runAudit(rootThreadId, codexHome, out, extraArgs = []) {
+  return run("node", [
+    "scripts/audit-codex-jsonl.mjs",
+    rootThreadId,
+    "--codex-home",
+    codexHome,
+    "--out",
+    out,
+    ...extraArgs
+  ], { allowFailure: true });
+}
+
+async function writeCodexAuditFixture(codexHome, sessions) {
+  const sessionDir = path.join(codexHome, "sessions");
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(
+    path.join(codexHome, "session_index.jsonl"),
+    sessions.map((session, index) => JSON.stringify({
+      id: session.id,
+      thread_name: session.threadName ?? session.id,
+      updated_at: `2026-06-28T00:${String(index).padStart(2, "0")}:00.000Z`
+    })).join("\n") + "\n"
+  );
+
+  for (const session of sessions) {
+    await writeFile(
+      path.join(sessionDir, `${session.id}.jsonl`),
+      session.lines.map((line) => typeof line === "string" ? line : JSON.stringify(line)).join("\n") + "\n"
+    );
+  }
+}
+
+function sessionMeta(id, payload = {}) {
+  return jsonlRecord("session_meta", {
+    id,
+    ...payload
+  });
+}
+
+function eventMsg(type, extra = {}) {
+  return jsonlRecord("event_msg", { type, ...extra });
+}
+
+function responseItem(type, extra = {}) {
+  return jsonlRecord("response_item", { type, ...extra });
+}
+
+function jsonlRecord(type, payload) {
+  return {
+    timestamp: "2026-06-28T00:00:00.000Z",
+    type,
+    payload
+  };
 }
 
 async function addStaleManifestEntries(home, target) {

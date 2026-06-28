@@ -153,6 +153,10 @@ run "npm install from worktree" allow "$WORKTREE" \
 run "gh pr create --draft" deny "$WORKTREE" \
   "$(jb 'gh pr create --draft --fill' "$WORKTREE")"
 
+# Non-mutating draft-pattern command -> deny before help can run.
+run "gh pr create --draft --help" deny "$WORKTREE" \
+  "$(jb 'gh pr create --draft --help' "$WORKTREE")"
+
 # gh pr new --draft -> deny (documented alias)
 run "gh pr new --draft" deny "$WORKTREE" \
   "$(jb 'gh pr new --draft --fill' "$WORKTREE")"

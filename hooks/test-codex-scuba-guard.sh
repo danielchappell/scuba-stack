@@ -75,6 +75,9 @@ patch_update() {
 run "gh pr create --draft" deny \
   "$(jb 'gh pr create --draft --fill' "$WORKTREE")"
 
+run "gh pr create --draft --help" deny \
+  "$(jb 'gh pr create --draft --help' "$WORKTREE")"
+
 run "gh pr create -d" deny \
   "$(jb 'gh pr create -d --fill' "$WORKTREE")"
 

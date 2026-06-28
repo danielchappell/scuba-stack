@@ -15,7 +15,7 @@
 
 Claude remains the most complete target. It installs shared tools under `~/.claude/tools`, installs the verified `scuba-guard.sh` `PreToolUse` adapter, and wires the hook into `~/.claude/settings.json` when `jq` is available.
 
-Codex installs skills, custom agents, shared tools under `~/.codex/tools`, the manual `$scuba` entrypoint skill, and a Codex-native hook adapter. It does not write Scuba into `~/.codex/AGENTS.md`, so ordinary new threads remain non-Scuba by default. After install, the hook is wired into `~/.codex/hooks.json` but remains pending trust until the user reviews/trusts it with `/hooks`. Treat it as operational only after trust and a live smoke.
+Codex installs skills, custom agents, shared tools under `~/.codex/tools`, the manual `$scuba` entrypoint skill, and a Codex-native hook adapter. It does not write Scuba into `~/.codex/AGENTS.md`, so ordinary new threads remain non-Scuba by default. After install, the hook is wired into `~/.codex/hooks.json`; that is only installed configuration. It remains pending trust until the user reviews/trusts it with `/hooks`, and it is operational only after trust plus a live denied tool call proves enforcement in the current Codex runtime.
 
 Codex subagent concurrency is capped by Codex settings. Use `agents.max_threads` to raise the number of open agent threads, keep `agents.max_depth` at `1` unless recursive delegation is deliberately needed, and set `agents.job_max_runtime_seconds` when CSV-style subagent jobs need longer runtimes. Close completed agents after their output is captured; completed open agents still count against the cap.
 
@@ -56,6 +56,14 @@ Then render the parent/subagent audit tree:
 node scripts/audit-codex-jsonl.mjs <root-thread-id> --out /tmp/scuba-codex-audit.md
 ```
 
+For acceptance gates, make the audit fail closed:
+
+```bash
+node scripts/audit-codex-jsonl.mjs <root-thread-id> --acceptance --out /tmp/scuba-codex-audit.md
+```
+
+Add `--require-subagents --require-subagent-metadata` only when the proof claim depends on worker/subagent metadata. In acceptance mode, missing root JSONL, JSON parse errors, and task starts without a matching complete or abort exit nonzero after the report is written when possible.
+
 The report uses operational metadata by default: parent/child thread ids, subagent nickname/role, task starts/completions, tool-call names, `.scuba` path evidence, worktree path evidence, and raw JSONL file paths for deeper inspection. It intentionally does not print raw transcript or reasoning text.
 
 ## Hook Verification
@@ -69,7 +77,9 @@ For Codex:
 
 - `bash hooks/test-codex-scuba-guard.sh` verifies the adapter logic outside the runtime.
 - After `bash install.sh codex`, restart Codex and run `/hooks`; review and trust the Scuba hook entry.
-- Live-smoke a blocked draft PR or primary-tree write before claiming enforcement is operational.
+- Live-smoke a blocked draft PR pattern or primary-tree write before claiming enforcement is operational. Prefer the non-mutating draft probe `gh pr create --draft --help` as a Codex tool call; the hook must deny it before help runs. If the command runs and prints help, record a hook-proof gap.
+
+Hook fixture tests are supplemental. They prove adapter logic for representative JSON input, not live runtime trust.
 
 ## Recovery
 

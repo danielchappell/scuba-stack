@@ -67,3 +67,17 @@ Hook behavior is portable as policy, not as an executable. Event names, input JS
 - a live smoke test proving the hook fires in the relevant worker/subagent context.
 
 Codex additionally has a trust boundary: installing `hooks.json` is not the same as operational enforcement. Non-managed command hooks must be reviewed and trusted in the target runtime before they can be treated as active.
+
+Codex hook status has three distinct states:
+
+- Installed config: the installer copied the adapter and merged a `~/.codex/hooks.json` entry.
+- Pending trust: Codex has not yet reviewed/trusted that command hook through `/hooks`.
+- Operational enforcement: the hook is trusted and a live tool call is denied by the installed hook, preferably with a non-mutating draft-pattern probe such as `gh pr create --draft --help`.
+
+Standalone hook fixtures are adapter proof only. They supplement, but do not replace, live denied tool-call evidence.
+
+## Codex JSONL Audit Boundary
+
+`scripts/audit-codex-jsonl.mjs` audits Codex session JSONL as operational metadata. It may report session tree shape, parent/subagent metadata, task start/complete/abort counts, tool-call names, `.scuba` path evidence, `.codex/worktrees` path evidence, skill references, parse errors, and raw JSONL file paths for follow-up. It must not print raw transcript or reasoning content.
+
+Default mode is for inspection. `--acceptance` turns the same report into a gate: missing root session JSONL, JSON parse errors, and unreconciled task starts exit nonzero after writing the report when possible. Optional subagent requirements are explicit proof claims, so `--require-subagents` and `--require-subagent-metadata` should be used only when that evidence is being claimed.
