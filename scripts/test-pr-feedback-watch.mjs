@@ -438,6 +438,7 @@ test("status records stale lock breaks durably", async () => {
     await mkdir(state.stateDir, { recursive: true });
     await writeFile(path.join(state.stateDir, "pr-feedback.lock"), JSON.stringify({
       schema_version: 1,
+      lock_id: "stale-lock",
       owner: "watcher",
       pid: 0,
       hostname: os.hostname(),
@@ -479,6 +480,30 @@ test("malformed parsed lock files become stale-breakable by mtime", async () => 
     const recorded = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
     assert.equal(recorded.stale_lock_break.previous_lock.corrupt_lock, true);
     assert.equal(recorded.stale_lock_break.previous_lock.schema_valid, false);
+    assert.equal(existsSync(lockPath), false);
+  });
+});
+
+test("schema-invalid locks with future expires_at recover by mtime", async () => {
+  await withTempDir("malformed-future-expires-lock", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    await writeFile(lockPath, JSON.stringify({
+      expires_at: "2999-01-01T00:00:00.000Z"
+    }, null, 2) + "\n");
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(lockPath, staleTime, staleTime);
+
+    const status = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+
+    assert.equal(status.status, 0, status.stderr);
+    const summary = parseStdoutJson(status);
+    assert.equal(summary.status, "status_checked");
+    const recorded = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(recorded.stale_lock_break.previous_lock.corrupt_lock, true);
+    assert.equal(recorded.stale_lock_break.previous_lock.schema_valid, false);
+    assert.equal(recorded.stale_lock_break.previous_lock.expires_at, "2999-01-01T00:00:00.000Z");
     assert.equal(existsSync(lockPath), false);
   });
 });
@@ -548,6 +573,88 @@ test("stale removal claims are crash recoverable", async () => {
     assert.equal(summary.status, "status_checked");
     const recorded = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
     assert.equal(recorded.stale_lock_break.previous_lock.operation, "stale");
+    assert.equal(existsSync(lockPath), false);
+    assert.deepEqual(await removalClaimFiles(state.stateDir), []);
+  });
+});
+
+test("old same-host live-pid removal claims do not block stale lock recovery", async () => {
+  await withTempDir("stale-removal-claim-live-pid", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    const lockBody = {
+      schema_version: 1,
+      lock_id: "stale-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    };
+    const lockRaw = JSON.stringify(lockBody, null, 2) + "\n";
+    await writeFile(lockPath, lockRaw);
+    const lockIdentity = lockIdentityFromLock(lockBody, lockRaw);
+    const claimPath = lockRemovalClaimPath(lockPath, lockIdentity);
+    await writeFile(claimPath, JSON.stringify({
+      schema_version: 1,
+      kind: "pr-feedback-lock-removal-claim",
+      identity_key: lockRemovalIdentityKey(lockIdentity),
+      claim_id: "old-live-pid-remover",
+      pid: process.pid,
+      hostname: os.hostname(),
+      claimed_at: "2026-06-27T00:00:00.000Z"
+    }, null, 2) + "\n");
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(claimPath, staleTime, staleTime);
+
+    const recovered = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+
+    assert.equal(recovered.status, 0, recovered.stderr);
+    const summary = parseStdoutJson(recovered);
+    assert.equal(summary.status, "status_checked");
+    assert.equal(existsSync(lockPath), false);
+    assert.deepEqual(await removalClaimFiles(state.stateDir), []);
+  });
+});
+
+test("mismatched identity removal claims do not block stale lock recovery", async () => {
+  await withTempDir("stale-removal-claim-wrong-identity", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await mkdir(state.stateDir, { recursive: true });
+    const lockPath = path.join(state.stateDir, "pr-feedback.lock");
+    const lockBody = {
+      schema_version: 1,
+      lock_id: "stale-lock",
+      owner: "watcher",
+      pid: 0,
+      hostname: os.hostname(),
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    };
+    const lockRaw = JSON.stringify(lockBody, null, 2) + "\n";
+    await writeFile(lockPath, lockRaw);
+    const lockIdentity = lockIdentityFromLock(lockBody, lockRaw);
+    const claimPath = lockRemovalClaimPath(lockPath, lockIdentity);
+    await writeFile(claimPath, JSON.stringify({
+      schema_version: 1,
+      kind: "pr-feedback-lock-removal-claim",
+      identity_key: "0123456789abcdef0123456789abcdef",
+      claim_id: "wrong-identity-remover",
+      pid: process.pid,
+      hostname: os.hostname(),
+      claimed_at: "2026-06-27T00:00:00.000Z"
+    }, null, 2) + "\n");
+
+    const recovered = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+
+    assert.equal(recovered.status, 0, recovered.stderr);
+    const summary = parseStdoutJson(recovered);
+    assert.equal(summary.status, "status_checked");
     assert.equal(existsSync(lockPath), false);
     assert.deepEqual(await removalClaimFiles(state.stateDir), []);
   });
@@ -961,6 +1068,16 @@ async function removalClaimFiles(stateDir) {
 
 function lockRemovalClaimPath(lockPath, expectedIdentity) {
   return path.join(path.dirname(lockPath), `.pr-feedback.lock.remove-${lockRemovalIdentityKey(expectedIdentity)}.claim`);
+}
+
+function lockIdentityFromLock(lock, raw = JSON.stringify(lock, null, 2) + "\n") {
+  return {
+    schema_valid: true,
+    lock_id: lock.lock_id,
+    owner: lock.owner,
+    started_at: lock.started_at,
+    content_sha256: sha256(raw)
+  };
 }
 
 function lockRemovalIdentityKey(expectedIdentity) {

@@ -38,6 +38,7 @@ export const PR_STATE_OWNERSHIP = Object.freeze({
 
 const OWNER_KINDS = new Set(Object.keys(PR_STATE_OWNERSHIP));
 const LOCK_REMOVAL_CLAIM_GRACE_MS = 1000;
+const LOCK_REMOVAL_CLAIM_LEASE_MS = DEFAULT_LOCK_STALE_MS;
 
 export class PrStateError extends Error {
   constructor(message, { code, file, exitCode } = {}) {
@@ -773,10 +774,8 @@ function validLockSchema(lock) {
 }
 
 function lockIsBreakable(current, fallbackStaleMs) {
-  const expiresAt = current.lock && typeof current.lock === "object"
-    ? Date.parse(current.lock.expires_at)
-    : NaN;
-  if (Number.isFinite(expiresAt)) {
+  if (current.schemaValid) {
+    const expiresAt = Date.parse(current.lock.expires_at);
     if (expiresAt > Date.now()) return false;
     if (current.lock.hostname === os.hostname() && isProcessAlive(current.lock.pid)) return false;
     return true;
@@ -899,9 +898,19 @@ function removalClaimIsStale(existing, identityKey) {
   if (!existing.valid) return ageMs > LOCK_REMOVAL_CLAIM_GRACE_MS;
 
   const claim = existing.claim;
-  if (claim.identity_key !== identityKey) return claim.hostname !== os.hostname() || !isProcessAlive(claim.pid);
+  if (claim.identity_key !== identityKey) return true;
+  if (removalClaimLeaseExpired(existing)) return true;
   if (claim.hostname === os.hostname()) return !isProcessAlive(claim.pid);
-  return Date.now() - Date.parse(claim.claimed_at) > DEFAULT_LOCK_STALE_MS;
+  return false;
+}
+
+function removalClaimLeaseExpired(existing) {
+  const now = Date.now();
+  const claimedAtMs = Date.parse(existing.claim.claimed_at);
+  if (!Number.isFinite(claimedAtMs)) return true;
+  if (claimedAtMs - now > LOCK_REMOVAL_CLAIM_GRACE_MS) return true;
+  if (now - claimedAtMs > LOCK_REMOVAL_CLAIM_LEASE_MS) return true;
+  return now - existing.stats.mtimeMs > LOCK_REMOVAL_CLAIM_LEASE_MS;
 }
 
 async function lockRemovalClaimMatches(claimPath, expectedClaim) {
