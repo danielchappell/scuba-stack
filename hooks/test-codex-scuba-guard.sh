@@ -78,6 +78,18 @@ run "gh pr create --draft" deny \
 run "gh pr create --draft --help" deny \
   "$(jb 'gh pr create --draft --help' "$WORKTREE")"
 
+run "escaped gh pr create --draft" deny \
+  "$(jb '\gh pr create --draft --help' "$WORKTREE")"
+
+run "split-escaped gh pr create --draft" deny \
+  "$(jb 'g\h pr create --draft --help' "$WORKTREE")"
+
+run "absolute path gh pr create --draft" deny \
+  "$(jb '/usr/bin/gh pr create --draft --help' "$WORKTREE")"
+
+run "relative path gh pr create --draft" deny \
+  "$(jb './gh pr create --draft --help' "$WORKTREE")"
+
 run "quoted gh pr create --draft" deny \
   "$(jb '"gh" pr create --draft --fill' "$WORKTREE")"
 
@@ -93,6 +105,12 @@ run "quoted -d flag" deny \
 run "gh pr create --draft=true" deny \
   "$(jb 'gh pr create --draft=true --fill' "$WORKTREE")"
 
+run "escaped --draft=true flag" deny \
+  "$(jb 'gh pr create --draft\=true --help' "$WORKTREE")"
+
+run "escaped -d flag" deny \
+  "$(jb 'gh pr create -\d --help' "$WORKTREE")"
+
 run "gh -R pr create --draft --help" deny \
   "$(jb 'gh -R owner/repo pr create --draft --help' "$WORKTREE")"
 
@@ -104,6 +122,12 @@ run "clean gh pr create" allow \
 
 run "gh api draft bypass" deny \
   "$(jb 'gh api graphql -f query=mutation -f draft=true' "$WORKTREE")"
+
+run "gh -R api draft bypass" deny \
+  "$(jb 'gh -R owner/repo api graphql -f query=mutation -f draft=true' "$WORKTREE")"
+
+run "gh --repo api conversion bypass" deny \
+  "$(jb 'gh --repo owner/repo api graphql -f query=mutation -f convertPullRequestToDraft=true' "$WORKTREE")"
 
 run "cd primary && git rm" deny \
   "$(jb "cd $PROJECT && git rm -rf services" "$WORKTREE")"

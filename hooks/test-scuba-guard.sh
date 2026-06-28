@@ -158,6 +158,18 @@ run "gh pr create --draft" deny "$WORKTREE" \
 run "gh pr create --draft --help" deny "$WORKTREE" \
   "$(jb 'gh pr create --draft --help' "$WORKTREE")"
 
+run "escaped gh pr create --draft" deny "$WORKTREE" \
+  "$(jb '\gh pr create --draft --help' "$WORKTREE")"
+
+run "split-escaped gh pr create --draft" deny "$WORKTREE" \
+  "$(jb 'g\h pr create --draft --help' "$WORKTREE")"
+
+run "absolute path gh pr create --draft" deny "$WORKTREE" \
+  "$(jb '/usr/bin/gh pr create --draft --help' "$WORKTREE")"
+
+run "relative path gh pr create --draft" deny "$WORKTREE" \
+  "$(jb './gh pr create --draft --help' "$WORKTREE")"
+
 run "quoted gh pr create --draft" deny "$WORKTREE" \
   "$(jb '"gh" pr create --draft --fill' "$WORKTREE")"
 
@@ -166,6 +178,12 @@ run "quoted --draft flag" deny "$WORKTREE" \
 
 run "quoted -d flag" deny "$WORKTREE" \
   "$(jb "gh pr create '-d' --fill" "$WORKTREE")"
+
+run "escaped --draft=true flag" deny "$WORKTREE" \
+  "$(jb 'gh pr create --draft\=true --help' "$WORKTREE")"
+
+run "escaped -d flag" deny "$WORKTREE" \
+  "$(jb 'gh pr create -\d --help' "$WORKTREE")"
 
 run "gh -R pr create --draft --help" deny "$WORKTREE" \
   "$(jb 'gh -R owner/repo pr create --draft --help' "$WORKTREE")"

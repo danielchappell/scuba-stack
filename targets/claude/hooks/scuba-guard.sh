@@ -199,7 +199,7 @@ in_temp() {
 }
 
 normalize_shell_words() {
-  printf '%s' "$1" | tr '\n' ' ' | sed -E "s/[\"']//g; s/([;&|()])/ \1 /g"
+  printf '%s' "$1" | tr '\n' ' ' | sed -E "s/\\\\(.)/\\1/g; s/[\"']//g; s/([;&|()])/ \\1 /g"
 }
 
 is_shell_separator() {
@@ -224,6 +224,36 @@ is_draft_flag() {
   return 1
 }
 
+is_gh_executable() {
+  local token="$1" base
+  base="${token##*/}"
+  [ "$base" = "gh" ]
+}
+
+gh_command_index_after_globals() {
+  local j="$1" token
+  while [ "$j" -lt "${#words[@]}" ]; do
+    token="${words[$j]}"
+    is_shell_separator "$token" && return 1
+    case "$token" in
+      -R|--repo|--hostname|--config)
+        j=$((j + 2))
+        ;;
+      --repo=*|--hostname=*|--config=*|--*)
+        j=$((j + 1))
+        ;;
+      -*)
+        j=$((j + 1))
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  [ "$j" -lt "${#words[@]}" ] || return 1
+  printf '%s' "$j"
+}
+
 has_gh_draft_pr_create() {
   local normalized token sub i j
   local -a words
@@ -231,28 +261,10 @@ has_gh_draft_pr_create() {
   read -r -a words <<< "$normalized"
 
   for ((i = 0; i < ${#words[@]}; i += 1)); do
-    [ "${words[$i]}" = "gh" ] || continue
-    j=$((i + 1))
-
-    while [ "$j" -lt "${#words[@]}" ]; do
-      token="${words[$j]}"
-      is_shell_separator "$token" && break
-      [ "$token" = "pr" ] && break
-      case "$token" in
-        -R|--repo|--hostname|--config)
-          j=$((j + 2))
-          ;;
-        --repo=*|--hostname=*|--config=*|--*)
-          j=$((j + 1))
-          ;;
-        -*)
-          j=$((j + 1))
-          ;;
-        *)
-          break
-          ;;
-      esac
-    done
+    is_gh_executable "${words[$i]}" || continue
+    if ! j="$(gh_command_index_after_globals "$((i + 1))")"; then
+      continue
+    fi
 
     [ "$j" -lt "${#words[@]}" ] || continue
     [ "${words[$j]}" = "pr" ] || continue
