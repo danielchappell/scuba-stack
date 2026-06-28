@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import {
@@ -14,6 +15,7 @@ import {
   PR_STATE_SCHEMA_VERSION,
   PrStateError,
   acquirePrStateLock,
+  assertPrStateWritable,
   eventIndexFromReplay,
   loadConfig,
   readOptionalJson,
@@ -26,6 +28,7 @@ const GITHUB_HOSTNAME = "github.com";
 const MERGEABILITY_MAX_ATTEMPTS = 5;
 const DEFAULT_MERGEABILITY_RETRY_DELAY_MS = 250;
 const GH_COMMAND_TIMEOUT_MS = envPositiveInteger("SCUBA_GH_COMMAND_TIMEOUT_MS", 10_000);
+const GH_TIMEOUT_KILL_GRACE_MS = envPositiveInteger("SCUBA_GH_TIMEOUT_KILL_GRACE_MS", 100);
 const GH_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const DIAGNOSTIC_LIMIT_CHARS = 500;
 
@@ -102,6 +105,7 @@ try {
 }
 
 async function runStatus(options) {
+  const startedAt = new Date().toISOString();
   const state = resolveStateFromOptions(options);
   let lock;
   try {
@@ -116,7 +120,9 @@ async function runStatus(options) {
         mode: "status",
         status: "status_checked",
         exitCode: 0,
-        staleLockBreak: lock.staleBreak
+        staleLockBreak: lock.staleBreak,
+        lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+        startedAt
       });
       await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatus, {
         lock,
@@ -135,13 +141,14 @@ async function runStatus(options) {
     }));
     return 0;
   } catch (error) {
-    return await handleStateError(error, state, lock, "status");
+    return await handleStateError(error, state, lock, "status", { startedAt });
   } finally {
     if (lock) await lock.release();
   }
 }
 
 async function runReplay(options) {
+  const startedAt = new Date().toISOString();
   const state = resolveStateFromOptions(options);
   let lock;
   try {
@@ -157,7 +164,9 @@ async function runReplay(options) {
       mode: "replay",
       status: "replayed",
       exitCode: 0,
-      staleLockBreak: lock.staleBreak
+      staleLockBreak: lock.staleBreak,
+      lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+      startedAt
     }), {
       lock,
       operation: "write_watcher_status"
@@ -170,16 +179,19 @@ async function runReplay(options) {
     }));
     return 0;
   } catch (error) {
-    return await handleStateError(error, state, lock, "replay");
+    return await handleStateError(error, state, lock, "replay", { startedAt });
   } finally {
     if (lock) await lock.release();
   }
 }
 
 async function runSnapshot(options) {
+  const startedAt = new Date().toISOString();
   const state = resolveStateFromOptions(options);
   let lock;
   let config = null;
+  let summary = null;
+  let exitCode = 0;
 
   try {
     lock = await acquireWatcherLock(state, "snapshot", options);
@@ -193,39 +205,54 @@ async function runSnapshot(options) {
     await writeSnapshotState(state, lock, snapshotResult, {
       status: "snapshot_collected",
       reason: null,
-      exitCode: 0
+      exitCode: 0,
+      startedAt
     });
 
-    writeSummary(snapshotSummary(state, config, snapshotResult, {
+    summary = snapshotSummary(state, config, snapshotResult, {
       status: "snapshot_collected",
       reason: null,
       exitCode: 0
-    }));
-    return 0;
+    });
+    exitCode = 0;
   } catch (error) {
     if (error.code === "mergeability_unknown" && error.snapshotResult) {
-      await writeSnapshotState(state, lock, error.snapshotResult, {
-        status: "blocked_mergeability_unknown",
-        reason: "mergeability_unknown",
-        exitCode: 20,
-        error,
-        updateLatest: false
-      }).catch((statusError) => {
-        process.stderr.write(`Failed to write blocked mergeability snapshot state: ${statusError.message}\n`);
-      });
-      process.stderr.write(`${error.message}\n`);
-      writeSummary(snapshotSummary(state, config, error.snapshotResult, {
-        status: "blocked_mergeability_unknown",
-        reason: "mergeability_unknown",
-        exitCode: 20,
-        error
-      }));
-      return 20;
+      try {
+        await writeSnapshotState(state, lock, error.snapshotResult, {
+          status: "blocked_mergeability_unknown",
+          reason: "mergeability_unknown",
+          exitCode: 20,
+          error,
+          startedAt
+        });
+        process.stderr.write(`${error.message}\n`);
+        summary = snapshotSummary(state, config, error.snapshotResult, {
+          status: "blocked_mergeability_unknown",
+          reason: "mergeability_unknown",
+          exitCode: 20,
+          error
+        });
+        exitCode = 20;
+      } catch (stateError) {
+        ({ summary, exitCode } = await snapshotErrorReport(stateError, state, lock, config, { startedAt }));
+      }
+    } else {
+      ({ summary, exitCode } = await snapshotErrorReport(error, state, lock, config, { startedAt }));
     }
-    return await handleSnapshotError(error, state, lock, config);
-  } finally {
-    if (lock) await lock.release();
   }
+
+  if (lock) {
+    try {
+      await lock.release();
+      lock = null;
+    } catch (releaseError) {
+      ({ summary, exitCode } = await snapshotErrorReport(releaseError, state, lock, config, { startedAt }));
+      lock = null;
+    }
+  }
+
+  writeSummary(summary);
+  return exitCode;
 }
 
 async function requireSnapshotConfig(state) {
@@ -241,7 +268,7 @@ async function requireSnapshotConfig(state) {
 }
 
 function validateSnapshotConfig(config) {
-  const required = new Set((config.required_check_contexts ?? []).map((context) => context.trim()));
+  const required = new Set(normalizedRequiredCheckContexts(config));
   const reviewerContexts = reviewerCheckIdentities(config.external_reviewer);
   const overlap = [...reviewerContexts].filter((identity) => required.has(identity));
   if (overlap.length > 0) {
@@ -267,10 +294,12 @@ function reviewerCheckIdentities(reviewer) {
 async function runGh(args) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let timedOut = false;
     let stdout = "";
     let stderr = "";
     let stdoutTruncated = false;
     let stderrTruncated = false;
+    let killTimer = null;
 
     const child = spawn("gh", args, {
       shell: false,
@@ -278,17 +307,12 @@ async function runGh(args) {
     });
 
     const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
+      if (settled || timedOut) return;
+      timedOut = true;
       child.kill("SIGTERM");
-      reject(githubError("gh_command_timeout", `gh command timed out after ${GH_COMMAND_TIMEOUT_MS}ms`, {
-        status: null,
-        stdout,
-        stderr,
-        stdoutTruncated,
-        stderrTruncated,
-        args
-      }));
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, GH_TIMEOUT_KILL_GRACE_MS);
     }, GH_COMMAND_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk) => {
@@ -305,6 +329,7 @@ async function runGh(args) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
       const code = error.code === "ENOENT" ? "gh_unavailable" : "gh_spawn_failed";
       reject(githubError(code, `Unable to execute gh: ${error.message}`, {
         status: null,
@@ -319,6 +344,19 @@ async function runGh(args) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (timedOut) {
+        reject(githubError("gh_command_timeout", `gh command timed out after ${GH_COMMAND_TIMEOUT_MS}ms`, {
+          status,
+          signal,
+          stdout,
+          stderr,
+          stdoutTruncated,
+          stderrTruncated,
+          args
+        }));
+        return;
+      }
       resolve({
         status,
         signal,
@@ -404,6 +442,8 @@ async function readSinglePrGraphql(config) {
   const result = await runGh([
     "api",
     "graphql",
+    "--hostname",
+    GITHUB_HOSTNAME,
     "-f",
     `owner=${repo.owner}`,
     "-f",
@@ -468,6 +508,7 @@ function singlePrQuery() {
               nodes {
                 __typename
                 ... on CheckRun {
+                  id
                   databaseId
                   name
                   status
@@ -477,6 +518,7 @@ function singlePrQuery() {
                   startedAt
                   completedAt
                   checkSuite {
+                    commit { oid }
                     workflowRun { headSha }
                     app {
                       databaseId
@@ -526,7 +568,8 @@ function normalizePrSnapshotResponse(response, config, attempt, priorAttempts) {
   }
   const repositoryOwner = requireString(repository.owner?.login, "repository.owner.login");
   const repositoryName = requireString(repository.name, "repository.name");
-  if (repositoryOwner !== repoConfig.owner || repositoryName !== repoConfig.name) {
+  if (repoIdentityKey(repositoryOwner) !== repoIdentityKey(repoConfig.owner) ||
+      repoIdentityKey(repositoryName) !== repoIdentityKey(repoConfig.name)) {
     throw githubError("malformed_github_data", "GitHub repository identity did not match config", null, response);
   }
 
@@ -550,7 +593,7 @@ function normalizePrSnapshotResponse(response, config, attempt, priorAttempts) {
   }
   const baseOid = optionalString(pr.baseRefOid);
   const collectedAt = new Date().toISOString();
-  const requiredContexts = config.required_check_contexts ?? [];
+  const requiredContexts = normalizedRequiredCheckContexts(config);
   const normalizedContexts = normalizeCheckContexts(pr.statusCheckRollup, headSha);
   const checkAggregate = aggregateChecks(requiredContexts, normalizedContexts);
   const prNumber = requireNumber(pr.number, "pullRequest.number");
@@ -571,7 +614,7 @@ function normalizePrSnapshotResponse(response, config, attempt, priorAttempts) {
       attempt
     },
     team: config.team,
-    repo: `${repoConfig.owner}/${repoConfig.name}`,
+    repo: `${repositoryOwner}/${repositoryName}`,
     repository: {
       owner: repositoryOwner,
       name: repositoryName,
@@ -589,7 +632,7 @@ function normalizePrSnapshotResponse(response, config, attempt, priorAttempts) {
       title: optionalString(pr.title),
       url: requireString(pr.url, "pullRequest.url"),
       author: {
-        login: requireString(pr.author?.login, "pullRequest.author.login")
+        login: optionalString(pr.author?.login)
       },
       base: {
         ref: requireString(pr.baseRefName, "pullRequest.baseRefName"),
@@ -635,10 +678,12 @@ function normalizePrSnapshotResponse(response, config, attempt, priorAttempts) {
 }
 
 function normalizeCheckContexts(statusCheckRollup, headSha) {
+  if (statusCheckRollup === null) return [];
   if (!plainObject(statusCheckRollup) || !plainObject(statusCheckRollup.contexts)) {
     throw githubError("malformed_github_data", "GitHub response missing complete statusCheckRollup contexts");
   }
-  if (statusCheckRollup.contexts.pageInfo?.hasNextPage === true) {
+  if (!plainObject(statusCheckRollup.contexts.pageInfo) ||
+      statusCheckRollup.contexts.pageInfo.hasNextPage !== false) {
     throw githubError("github_collection_incomplete", "GitHub statusCheckRollup collection is incomplete");
   }
   const nodes = statusCheckRollup.contexts.nodes;
@@ -655,13 +700,18 @@ function normalizeCheckContexts(statusCheckRollup, headSha) {
 function normalizeCheckContext(node, headSha) {
   if (!plainObject(node)) throw githubError("malformed_github_data", "GitHub statusCheckRollup node must be an object");
   if (node.__typename === "CheckRun") {
-    const contextHeadSha = optionalString(node.checkSuite?.workflowRun?.headSha);
+    const workflowHeadSha = optionalString(node.checkSuite?.workflowRun?.headSha);
+    const suiteCommitOid = optionalString(node.checkSuite?.commit?.oid);
+    const contextHeadSha = workflowHeadSha ?? suiteCommitOid;
+    const headSource = workflowHeadSha ? "workflow_run" : suiteCommitOid ? "check_suite_commit" : null;
     const name = optionalString(node.name);
     if (!name) throw githubError("malformed_github_data", "GitHub CheckRun missing name");
-    const isCurrentHead = !contextHeadSha || contextHeadSha === headSha;
+    const isCurrentHead = contextHeadSha === headSha;
     return {
       source_kind: "check_run",
-      id: optionalNumber(node.databaseId),
+      id: optionalString(node.id),
+      node_id: optionalString(node.id),
+      database_id: optionalNumber(node.databaseId),
       name,
       context: name,
       status: normalizeUpper(node.status),
@@ -672,7 +722,8 @@ function normalizeCheckContext(node, headSha) {
       url: optionalString(node.detailsUrl) ?? optionalString(node.url),
       started_at: optionalTimestamp(node.startedAt),
       completed_at: optionalTimestamp(node.completedAt),
-      head_sha: contextHeadSha ?? headSha,
+      head_sha: contextHeadSha,
+      head_source: headSource,
       is_current_head: isCurrentHead
     };
   }
@@ -763,23 +814,27 @@ async function writeSnapshotState(state, lock, snapshotResult, {
   reason,
   exitCode,
   error = null,
-  updateLatest = true
+  startedAt = null
 }) {
   snapshotResult.status = status;
   snapshotResult.reason = reason;
   snapshotResult.timing.started_at = snapshotResult.started_at;
   snapshotResult.timing.completed_at = snapshotResult.completed_at;
 
+  const snapshotPath = `snapshots/${snapshotResult.snapshot_id}.json`;
+  await assertPrStateWritable(state, "watcher", snapshotPath, { lock });
+  await assertPrStateWritable(state, "watcher", "latest-snapshot.json", { lock });
+  await assertPrStateWritable(state, "watcher", "watcher-status.json", { lock });
+
   await writePrStateJson(state, "watcher", `snapshots/${snapshotResult.snapshot_id}.json`, snapshotResult, {
     lock,
-    operation: "write_snapshot"
+    operation: "write_snapshot",
+    noOverwrite: true
   });
-  if (updateLatest) {
-    await writePrStateJson(state, "watcher", "latest-snapshot.json", snapshotResult, {
-      lock,
-      operation: "write_latest_snapshot"
-    });
-  }
+  await writePrStateJson(state, "watcher", "latest-snapshot.json", snapshotResult, {
+    lock,
+    operation: "write_latest_snapshot"
+  });
   await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatusRecord({
     mode: "snapshot",
     status,
@@ -789,36 +844,51 @@ async function writeSnapshotState(state, lock, snapshotResult, {
     staleLockBreak: lock.staleBreak,
     lastSuccessfulSnapshotId: status === "snapshot_collected"
       ? snapshotResult.snapshot_id
-      : await previousSuccessfulSnapshotId(state)
+      : await previousSuccessfulSnapshotId(state),
+    startedAt
   }), {
     lock,
     operation: "write_watcher_status"
   });
 }
 
-async function handleSnapshotError(error, state, lock, config) {
-  const exitCode = exitCodeForError(error);
-  const reason = reasonForError(error);
+async function snapshotErrorReport(error, state, lock, config, { startedAt = null } = {}) {
+  let reportedError = error;
+  let exitCode = exitCodeForError(reportedError);
+  let reason = reasonForError(reportedError);
   process.stderr.write(`${error.message}\n`);
 
   if (lock && reason !== "lock_busy") {
-    await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatusRecord({
-      mode: "snapshot",
-      status: statusForSnapshotFailure(reason),
-      reason,
-      exitCode,
-      error,
-      staleLockBreak: lock.staleBreak,
-      lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state)
-    }), {
-      lock,
-      operation: "write_watcher_status"
-    }).catch((statusError) => {
+    try {
+      await writePrStateJson(state, "watcher", "watcher-status.json", watcherStatusRecord({
+        mode: "snapshot",
+        status: statusForSnapshotFailure(reason),
+        reason,
+        exitCode,
+        error: reportedError,
+        staleLockBreak: lock.staleBreak,
+        lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+        startedAt
+      }), {
+        lock,
+        operation: "write_watcher_status"
+      });
+    } catch (statusError) {
       process.stderr.write(`Failed to write watcher-status.json: ${statusError.message}\n`);
-    });
+      reportedError = statusError;
+      exitCode = exitCodeForError(reportedError);
+      reason = reasonForError(reportedError);
+    }
   }
 
-  writeSummary({
+  return {
+    summary: snapshotFailureSummary(state, config, reportedError, { exitCode, reason }),
+    exitCode
+  };
+}
+
+function snapshotFailureSummary(state, config, error, { exitCode, reason }) {
+  return {
     ...baseSummary(state, config, {
       mode: "snapshot",
       status: statusForSnapshotFailure(reason),
@@ -829,8 +899,7 @@ async function handleSnapshotError(error, state, lock, config) {
     expected_head_sha: error.expectedHeadSha ?? null,
     actual_head_sha: error.actualHeadSha ?? null,
     github_error: error.githubMetadata ?? null
-  });
-  return exitCode;
+  };
 }
 
 function statusForSnapshotFailure(reason) {
@@ -935,6 +1004,10 @@ function repoParts(repo) {
   };
 }
 
+function repoIdentityKey(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
 function mergeabilityIsUnknown(mergeability) {
   const mergeable = normalizeUpper(mergeability.mergeable);
   const mergeStateStatus = normalizeUpper(mergeability.merge_state_status);
@@ -947,7 +1020,7 @@ function mergeabilityIsUnknown(mergeability) {
 function snapshotId(snapshot) {
   const time = (snapshot.completed_at ?? new Date().toISOString()).replace(/[^0-9A-Za-z]+/g, "-").replace(/-$/u, "");
   const head = snapshot.head_sha.replace(/[^0-9A-Za-z]+/g, "").slice(0, 16);
-  return `${time}-pr-${snapshot.pr.number}-${head}`;
+  return `${time}-pr-${snapshot.pr.number}-${head}-${randomUUID().slice(0, 12)}`;
 }
 
 function requireString(value, label) {
@@ -1030,6 +1103,10 @@ function normalizeUpper(value) {
   return String(value).trim().replace(/[-\s]+/g, "_").toUpperCase();
 }
 
+function normalizedRequiredCheckContexts(config) {
+  return [...new Set((config.required_check_contexts ?? []).map((context) => context.trim()))];
+}
+
 async function previousSuccessfulSnapshotId(state) {
   const status = await readOptionalJson(state, "watcher-status.json").catch(() => null);
   return typeof status?.last_successful_snapshot_id === "string"
@@ -1038,9 +1115,17 @@ async function previousSuccessfulSnapshotId(state) {
 }
 
 function boundedDiagnostic(value) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  const text = redactDiagnostic(String(value ?? "").replace(/\s+/g, " ").trim());
   if (text.length <= DIAGNOSTIC_LIMIT_CHARS) return text;
   return `${text.slice(0, DIAGNOSTIC_LIMIT_CHARS)}...<truncated>`;
+}
+
+function redactDiagnostic(value) {
+  return String(value)
+    .replace(/github_pat_[A-Za-z0-9_]{10,}/gu, "[REDACTED]")
+    .replace(/gh[pousr]_[A-Za-z0-9_]{10,}/gu, "[REDACTED]")
+    .replace(/\b(authorization|bearer|token)\s*[:=]\s*[^\s,;]+/giu, "$1 [REDACTED]")
+    .replace(/(https?:\/\/)([^:@/\s]+):([^@/\s]+)@/giu, "$1[REDACTED]@");
 }
 
 function envPositiveInteger(name, fallback) {
@@ -1142,7 +1227,7 @@ async function acquireWatcherLock(state, mode, options) {
   });
 }
 
-async function handleStateError(error, state, lock, mode) {
+async function handleStateError(error, state, lock, mode, { startedAt = null } = {}) {
   const exitCode = exitCodeForError(error);
   const reason = reasonForError(error);
   process.stderr.write(`${error.message}\n`);
@@ -1154,7 +1239,9 @@ async function handleStateError(error, state, lock, mode) {
       reason,
       exitCode,
       error,
-      staleLockBreak: lock.staleBreak
+      staleLockBreak: lock.staleBreak,
+      lastSuccessfulSnapshotId: await previousSuccessfulSnapshotId(state),
+      startedAt
     }), {
       lock,
       operation: "write_watcher_status"
@@ -1242,7 +1329,8 @@ function watcherStatusRecord({
   exitCode,
   error = null,
   staleLockBreak = null,
-  lastSuccessfulSnapshotId = null
+  lastSuccessfulSnapshotId = null,
+  startedAt = null
 }) {
   const now = new Date().toISOString();
   return {
@@ -1250,17 +1338,25 @@ function watcherStatusRecord({
     mode,
     status,
     reason,
-    started_at: now,
+    started_at: startedAt ?? now,
     completed_at: now,
     last_successful_snapshot_id: lastSuccessfulSnapshotId,
-    last_error: error ? {
-      reason: reasonForError(error),
-      message: boundedDiagnostic(error.message),
-      file: error.file ?? null
-    } : null,
+    last_error: error ? lastErrorRecord(error) : null,
     stale_lock_break: staleLockBreak,
     exit_code: exitCode
   };
+}
+
+function lastErrorRecord(error) {
+  const record = {
+    reason: reasonForError(error),
+    message: boundedDiagnostic(error.message),
+    file: error.file ?? null
+  };
+  if (error.expectedHeadSha !== undefined) record.expected_head_sha = error.expectedHeadSha;
+  if (error.actualHeadSha !== undefined) record.actual_head_sha = error.actualHeadSha;
+  if (error.githubMetadata) record.github = error.githubMetadata;
+  return record;
 }
 
 function reasonForError(error) {

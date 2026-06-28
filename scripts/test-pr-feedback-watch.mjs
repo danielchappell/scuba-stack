@@ -1692,6 +1692,9 @@ test("snapshot reads PR identity, head SHA, and mergeability from the configured
     assert.equal(immutable.mergeability.attempts, 1);
     assert.equal(immutable.checks.source, "statusCheckRollup");
     assert.equal(immutable.checks.contexts[0].source_kind, "check_run");
+    assert.equal(immutable.checks.contexts[0].node_id, "CR_kwDO_ci_test");
+    assert.equal(immutable.checks.contexts[0].database_id, 101);
+    assert.equal(immutable.checks.contexts[0].head_source, "workflow_run");
     assert.equal(immutable.checks.contexts[0].app.slug, "github-actions");
     assert.equal(immutable.checks.contexts[0].url, "https://github.com/octo/repo/actions/runs/1");
     assert.equal(immutable.checks.contexts[0].started_at, "2026-06-28T00:01:00Z");
@@ -1703,6 +1706,72 @@ test("snapshot reads PR identity, head SHA, and mergeability from the configured
     assert.equal(calls.filter((call) => call.args[0] === "api").length, 1);
     assert.ok(calls.some((call) => call.args.join(" ").includes("pullRequest(number: $number)")));
     assert.ok(!calls.some((call) => call.args.join(" ").includes("pr list")));
+  });
+});
+
+test("snapshot pins trusted gh reads to github.com even when GH_HOST differs", async () => {
+  await withTempDir("snapshot-host-pin", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await writePrStateJson(state, "manager", "config.json", validConfig());
+    const fakeGh = await writeFakeGh(tmp, {
+      requireApiHostname: "github.com",
+      graphql: [okPrResponse()]
+    });
+
+    const snapshot = runWatcher(["snapshot", "--state-dir", state.stateDir], {
+      env: { ...fakeGh.env, GH_HOST: "enterprise.example.com" }
+    });
+
+    assert.equal(snapshot.status, 0, snapshot.stderr);
+    const calls = await fakeGh.calls();
+    const auth = calls.find((call) => call.args[0] === "auth");
+    const api = calls.find((call) => call.args[0] === "api");
+    assert.deepEqual(auth.args.slice(0, 4), ["auth", "status", "--hostname", "github.com"]);
+    assert.equal(api.args[0], "api");
+    assert.equal(api.args[1], "graphql");
+    assert.equal(api.args[api.args.indexOf("--hostname") + 1], "github.com");
+
+    const summary = parseStdoutJson(snapshot);
+    const immutable = JSON.parse(await readFile(path.join(state.stateDir, "snapshots", `${summary.snapshot_id}.json`), "utf8"));
+    assert.equal(immutable.source.hostname, "github.com");
+  });
+});
+
+test("snapshot compares repository identity case-insensitively and persists canonical GitHub casing", async () => {
+  await withTempDir("snapshot-repo-casing", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "canonical") });
+    await writePrStateJson(state, "manager", "config.json", validConfig({
+      repo: "Octo/Repo"
+    }));
+    const fakeGh = await writeFakeGh(path.join(tmp, "fake-canonical"), {
+      graphql: [okPrResponse({
+        repoOwner: "octo",
+        repoName: "Repo",
+        author: null
+      })]
+    });
+
+    const snapshot = runWatcher(["snapshot", "--state-dir", state.stateDir], { env: fakeGh.env });
+
+    assert.equal(snapshot.status, 0, snapshot.stderr);
+    const summary = parseStdoutJson(snapshot);
+    assert.equal(summary.repo, "octo/Repo");
+    const immutable = JSON.parse(await readFile(path.join(state.stateDir, "snapshots", `${summary.snapshot_id}.json`), "utf8"));
+    assert.equal(immutable.repo, "octo/Repo");
+    assert.equal(immutable.repository.owner, "octo");
+    assert.equal(immutable.repository.name, "Repo");
+    assert.equal(immutable.pr.author.login, null);
+
+    const mismatch = resolvePrState({ stateDir: path.join(tmp, "mismatch") });
+    await writePrStateJson(mismatch, "manager", "config.json", validConfig({
+      repo: { owner: "octo", name: "repo" }
+    }));
+    const mismatchGh = await writeFakeGh(path.join(tmp, "fake-mismatch"), {
+      graphql: [okPrResponse({ repoOwner: "octo", repoName: "other" })]
+    });
+    const failed = runWatcher(["snapshot", "--state-dir", mismatch.stateDir], { env: mismatchGh.env });
+    assert.equal(failed.status, 20, failed.stderr);
+    assert.equal(parseStdoutJson(failed).reason, "malformed_github_data");
   });
 });
 
@@ -1761,6 +1830,10 @@ test("snapshot retries unknown mergeability and blocks after the retry budget", 
     const watcherStatus = JSON.parse(await readFile(path.join(exhaustedState.stateDir, "watcher-status.json"), "utf8"));
     assert.equal(watcherStatus.status, "blocked_mergeability_unknown");
     assert.equal(watcherStatus.reason, "mergeability_unknown");
+    assert.equal(watcherStatus.last_successful_snapshot_id, null);
+    const latest = JSON.parse(await readFile(path.join(exhaustedState.stateDir, "latest-snapshot.json"), "utf8"));
+    assert.equal(latest.snapshot_id, blockedSummary.snapshot_id);
+    assert.equal(latest.status, "blocked_mergeability_unknown");
   });
 });
 
@@ -1806,6 +1879,23 @@ test("snapshot aggregates required checks, statuses, missing contexts, and inval
       assert.equal(immutable.checks.aggregate, aggregate, label);
       assert.deepEqual(immutable.checks.required_contexts, required, label);
     }
+
+    const normalizedState = resolvePrState({ stateDir: path.join(tmp, "normalized-required") });
+    await writePrStateJson(normalizedState, "manager", "config.json", validConfig({
+      required_check_contexts: [" ci/test ", "ci/test"]
+    }));
+    const normalizedGh = await writeFakeGh(path.join(tmp, "fake-normalized"), {
+      graphql: [okPrResponse({
+        contexts: [checkRun({ name: "ci/test", conclusion: "SUCCESS" })]
+      })]
+    });
+    const normalized = runWatcher(["snapshot", "--state-dir", normalizedState.stateDir], { env: normalizedGh.env });
+    assert.equal(normalized.status, 0, normalized.stderr);
+    const normalizedSummary = parseStdoutJson(normalized);
+    assert.equal(normalizedSummary.check_aggregate, "checks_green");
+    const normalizedSnapshot = JSON.parse(await readFile(path.join(normalizedState.stateDir, "snapshots", `${normalizedSummary.snapshot_id}.json`), "utf8"));
+    assert.deepEqual(normalizedSnapshot.checks.required_contexts, ["ci/test"]);
+    assert.deepEqual(normalizedSnapshot.checks.missing_required_contexts, []);
 
     const invalidState = resolvePrState({ stateDir: path.join(tmp, "invalid-overlap") });
     await writePrStateJson(invalidState, "manager", "config.json", validConfig({
@@ -1935,11 +2025,28 @@ test("snapshot handles missing, hung, and nonzero gh as bounded channel failures
     const timeoutGh = await writeFakeGh(path.join(tmp, "fake-timeout"), {
       graphql: [{ sleepMs: 500, body: prGraphqlResponse() }]
     });
+    const timeoutStarted = Date.now();
     const timedOut = runWatcher(["snapshot", "--state-dir", timeoutState.stateDir], {
       env: { ...timeoutGh.env, SCUBA_GH_COMMAND_TIMEOUT_MS: "25" }
     });
+    const timeoutElapsed = Date.now() - timeoutStarted;
     assert.equal(timedOut.status, 20, timedOut.stderr);
     assert.equal(parseStdoutJson(timedOut).reason, "gh_command_timeout");
+    assert.ok(timeoutElapsed < 1_000, `timeout elapsed ${timeoutElapsed}ms`);
+
+    const resistantState = resolvePrState({ stateDir: path.join(tmp, "sigterm-resistant") });
+    await writePrStateJson(resistantState, "manager", "config.json", validConfig());
+    const resistantGh = await writeFakeGh(path.join(tmp, "fake-sigterm-resistant"), {
+      graphql: [{ sleepMs: 1_500, ignoreSigterm: true, body: prGraphqlResponse() }]
+    });
+    const resistantStarted = Date.now();
+    const resistant = runWatcher(["snapshot", "--state-dir", resistantState.stateDir], {
+      env: { ...resistantGh.env, SCUBA_GH_COMMAND_TIMEOUT_MS: "25" }
+    });
+    const resistantElapsed = Date.now() - resistantStarted;
+    assert.equal(resistant.status, 20, resistant.stderr);
+    assert.equal(parseStdoutJson(resistant).reason, "gh_command_timeout");
+    assert.ok(resistantElapsed < 1_000, `SIGTERM-resistant timeout elapsed ${resistantElapsed}ms`);
 
     const authRaceState = resolvePrState({ stateDir: path.join(tmp, "auth-race") });
     await writePrStateJson(authRaceState, "manager", "config.json", validConfig());
@@ -1956,7 +2063,8 @@ test("snapshot handles missing, hung, and nonzero gh as bounded channel failures
 
     const noisyState = resolvePrState({ stateDir: path.join(tmp, "noisy") });
     await writePrStateJson(noisyState, "manager", "config.json", validConfig());
-    const huge = `token_${"x".repeat(5000)}`;
+    const secret = "ghp_REDACTIONPROBETOKEN1234567890abcdef";
+    const huge = `token_${"x".repeat(5000)} ${secret}`;
     const noisyGh = await writeFakeGh(path.join(tmp, "fake-noisy"), {
       auth: { exitCode: 1, stdout: huge, stderr: huge }
     });
@@ -1965,8 +2073,10 @@ test("snapshot handles missing, hung, and nonzero gh as bounded channel failures
     const noisySummary = parseStdoutJson(noisy);
     assert.equal(noisySummary.reason, "auth_failed");
     assert.ok(noisySummary.github_error.stderr_excerpt.length < 530);
+    assertNoSecret(noisy.stdout, secret);
     const noisyStatus = JSON.parse(await readFile(path.join(noisyState.stateDir, "watcher-status.json"), "utf8"));
     assert.ok(noisyStatus.last_error.message.length < 530);
+    assertNoSecret(JSON.stringify(noisyStatus), secret);
   });
 });
 
@@ -1975,8 +2085,8 @@ test("snapshot rejects partial GraphQL errors, incomplete check rollups, and mal
     const cases = [
       ["partial-errors", { body: { ...prGraphqlResponse(), errors: [{ type: "SOMETHING", message: "partial data cannot be trusted" }] } }, "malformed_github_data"],
       ["rollup-page", { body: prGraphqlResponse({ pageInfo: { hasNextPage: true, endCursor: "cursor-1" } }) }, "github_collection_incomplete"],
-      ["missing-rollup", { body: prGraphqlResponse({ statusCheckRollup: null }) }, "malformed_github_data"],
-      ["missing-author", { body: prGraphqlResponse({ author: null }) }, "malformed_github_data"],
+      ["missing-page-info", { body: prGraphqlResponse({ statusCheckRollup: { contexts: { nodes: [] } } }) }, "github_collection_incomplete"],
+      ["null-page-info", { body: prGraphqlResponse({ statusCheckRollup: { contexts: { pageInfo: null, nodes: [] } } }) }, "github_collection_incomplete"],
       ["wrong-shape", { stdout: "[]\n" }, "malformed_github_data"]
     ];
 
@@ -2005,6 +2115,55 @@ test("snapshot rejects partial GraphQL errors, incomplete check rollups, and mal
     const rate = runWatcher(["snapshot", "--state-dir", rateState.stateDir], { env: rateGh.env });
     assert.equal(rate.status, 20, rate.stderr);
     assert.equal(parseStdoutJson(rate).reason, "github_rate_limited");
+
+    const secretState = resolvePrState({ stateDir: path.join(tmp, "graphql-secret") });
+    await writePrStateJson(secretState, "manager", "config.json", validConfig());
+    const secret = "ghp_GRAPHQLREDACTIONTOKEN1234567890abcdef";
+    const secretGh = await writeFakeGh(path.join(tmp, "fake-graphql-secret"), {
+      graphql: [{
+        body: {
+          ...prGraphqlResponse(),
+          errors: [{ type: "SOMETHING", message: `partial ${secret} cannot be trusted` }]
+        }
+      }]
+    });
+    const secretResult = runWatcher(["snapshot", "--state-dir", secretState.stateDir], { env: secretGh.env });
+    assert.equal(secretResult.status, 20, secretResult.stderr);
+    const secretSummary = parseStdoutJson(secretResult);
+    assert.equal(secretSummary.reason, "malformed_github_data");
+    assertNoSecret(secretResult.stdout, secret);
+    const secretStatus = JSON.parse(await readFile(path.join(secretState.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(secretStatus.last_error.github.api_errors[0].type, "SOMETHING");
+    assertNoSecret(JSON.stringify(secretStatus), secret);
+  });
+});
+
+test("snapshot treats nullable statusCheckRollup as empty check evidence", async () => {
+  await withTempDir("snapshot-null-rollup", async (tmp) => {
+    const notRequiredState = resolvePrState({ stateDir: path.join(tmp, "not-required") });
+    await writePrStateJson(notRequiredState, "manager", "config.json", validConfig({
+      required_check_contexts: []
+    }));
+    const notRequiredGh = await writeFakeGh(path.join(tmp, "fake-not-required"), {
+      graphql: [okPrResponse({ statusCheckRollup: null })]
+    });
+    const notRequired = runWatcher(["snapshot", "--state-dir", notRequiredState.stateDir], { env: notRequiredGh.env });
+    assert.equal(notRequired.status, 0, notRequired.stderr);
+    assert.equal(parseStdoutJson(notRequired).check_aggregate, "checks_not_required");
+
+    const missingState = resolvePrState({ stateDir: path.join(tmp, "missing") });
+    await writePrStateJson(missingState, "manager", "config.json", validConfig({
+      required_check_contexts: ["ci/test"]
+    }));
+    const missingGh = await writeFakeGh(path.join(tmp, "fake-missing"), {
+      graphql: [okPrResponse({ statusCheckRollup: null })]
+    });
+    const missing = runWatcher(["snapshot", "--state-dir", missingState.stateDir], { env: missingGh.env });
+    assert.equal(missing.status, 0, missing.stderr);
+    const missingSummary = parseStdoutJson(missing);
+    assert.equal(missingSummary.check_aggregate, "checks_missing");
+    const missingSnapshot = JSON.parse(await readFile(path.join(missingState.stateDir, "snapshots", `${missingSummary.snapshot_id}.json`), "utf8"));
+    assert.deepEqual(missingSnapshot.checks.missing_required_contexts, ["ci/test"]);
   });
 });
 
@@ -2113,6 +2272,9 @@ test("snapshot mergeability retry remains bounded and coherent across final PR r
     assert.equal(staleSummary.reason, "blocked_stale_head");
     assert.equal(staleSummary.expected_head_sha, "aaa111");
     assert.equal(staleSummary.actual_head_sha, "bbb222");
+    const staleStatus = JSON.parse(await readFile(path.join(staleHead.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(staleStatus.last_error.expected_head_sha, "aaa111");
+    assert.equal(staleStatus.last_error.actual_head_sha, "bbb222");
   });
 });
 
@@ -2187,6 +2349,175 @@ test("snapshot check aggregation is current-head filtered and deterministic", as
     assert.equal(byContext.startup, "failed");
     assert.equal(byContext["pending-null"], "pending");
     assert.equal(byContext.expected, "pending");
+
+    const commitOnly = resolvePrState({ stateDir: path.join(tmp, "commit-only") });
+    await writePrStateJson(commitOnly, "manager", "config.json", validConfig({
+      required_check_contexts: ["ci/test"]
+    }));
+    const commitOnlyGh = await writeFakeGh(path.join(tmp, "fake-commit-only"), {
+      graphql: [okPrResponse({
+        contexts: [checkRun({
+          name: "ci/test",
+          workflowRun: null,
+          commitOid: "abc123head",
+          conclusion: "SUCCESS"
+        })]
+      })]
+    });
+    const commitOnlyResult = runWatcher(["snapshot", "--state-dir", commitOnly.stateDir], { env: commitOnlyGh.env });
+    assert.equal(commitOnlyResult.status, 0, commitOnlyResult.stderr);
+    const commitOnlySummary = parseStdoutJson(commitOnlyResult);
+    assert.equal(commitOnlySummary.check_aggregate, "checks_green");
+    const commitOnlySnapshot = JSON.parse(await readFile(path.join(commitOnly.stateDir, "snapshots", `${commitOnlySummary.snapshot_id}.json`), "utf8"));
+    assert.equal(commitOnlySnapshot.checks.contexts[0].head_sha, "abc123head");
+    assert.equal(commitOnlySnapshot.checks.contexts[0].head_source, "check_suite_commit");
+
+    const missingHead = resolvePrState({ stateDir: path.join(tmp, "missing-head") });
+    await writePrStateJson(missingHead, "manager", "config.json", validConfig({
+      required_check_contexts: ["ci/test"]
+    }));
+    const missingHeadGh = await writeFakeGh(path.join(tmp, "fake-missing-head"), {
+      graphql: [okPrResponse({
+        contexts: [checkRun({
+          name: "ci/test",
+          workflowRun: null,
+          commitOid: null,
+          conclusion: "SUCCESS"
+        })]
+      })]
+    });
+    const missingHeadResult = runWatcher(["snapshot", "--state-dir", missingHead.stateDir], { env: missingHeadGh.env });
+    assert.equal(missingHeadResult.status, 0, missingHeadResult.stderr);
+    const missingHeadSummary = parseStdoutJson(missingHeadResult);
+    assert.equal(missingHeadSummary.check_aggregate, "checks_missing");
+    const missingHeadSnapshot = JSON.parse(await readFile(path.join(missingHead.stateDir, "snapshots", `${missingHeadSummary.snapshot_id}.json`), "utf8"));
+    assert.equal(missingHeadSnapshot.checks.contexts[0].head_sha, null);
+    assert.equal(missingHeadSnapshot.checks.contexts[0].is_current_head, false);
+  });
+});
+
+test("snapshot writes append-only immutable records under a fixed clock", async () => {
+  await withTempDir("snapshot-append-only", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await writePrStateJson(state, "manager", "config.json", validConfig());
+    const fakeGh = await writeFakeGh(path.join(tmp, "fake-append-only"), {
+      graphql: [
+        okPrResponse({ title: "first fixed-clock evidence" }),
+        okPrResponse({ title: "second fixed-clock evidence" })
+      ]
+    });
+
+    const fixed = "2026-06-28T00:00:00.000Z";
+    const first = runWatcherWithFixedNow(["snapshot", "--state-dir", state.stateDir], fixed, { env: fakeGh.env });
+    const second = runWatcherWithFixedNow(["snapshot", "--state-dir", state.stateDir], fixed, { env: fakeGh.env });
+
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(second.status, 0, second.stderr);
+    const firstSummary = parseStdoutJson(first);
+    const secondSummary = parseStdoutJson(second);
+    assert.notEqual(firstSummary.snapshot_id, secondSummary.snapshot_id);
+    const snapshotFiles = (await readdir(path.join(state.stateDir, "snapshots"))).filter((entry) => entry.endsWith(".json")).sort();
+    assert.deepEqual(snapshotFiles, [`${firstSummary.snapshot_id}.json`, `${secondSummary.snapshot_id}.json`].sort());
+    const titles = [];
+    for (const file of snapshotFiles) {
+      titles.push(JSON.parse(await readFile(path.join(state.stateDir, "snapshots", file), "utf8")).pr.title);
+    }
+    assert.deepEqual(titles.sort(), ["first fixed-clock evidence", "second fixed-clock evidence"]);
+  });
+});
+
+test("snapshot write and release failures produce one blocked JSON result without clean current status", async () => {
+  await withTempDir("snapshot-write-release-failure", async (tmp) => {
+    const statusFailureState = resolvePrState({ stateDir: path.join(tmp, "status-failure") });
+    await writePrStateJson(statusFailureState, "manager", "config.json", validConfig());
+    await mkdir(path.join(statusFailureState.stateDir, "watcher-status.json"));
+    const statusFailureGh = await writeFakeGh(path.join(tmp, "fake-status-failure"), {
+      graphql: [okPrResponse()]
+    });
+    const statusFailure = runWatcher(["snapshot", "--state-dir", statusFailureState.stateDir], { env: statusFailureGh.env });
+    assert.equal(statusFailure.status, 20, statusFailure.stderr);
+    const statusFailureSummary = parseStdoutJson(statusFailure);
+    assert.equal(statusFailureSummary.reason, "invalid_state_path");
+    assert.equal(statusFailureSummary.snapshot_id, null);
+    assert.equal(existsSync(path.join(statusFailureState.stateDir, "latest-snapshot.json")), false);
+
+    const blockedWriteState = resolvePrState({ stateDir: path.join(tmp, "blocked-write") });
+    await writePrStateJson(blockedWriteState, "manager", "config.json", validConfig());
+    await writeFile(path.join(blockedWriteState.stateDir, "snapshots"), "not a directory\n");
+    const blockedWriteGh = await writeFakeGh(path.join(tmp, "fake-blocked-write"), {
+      graphql: Array.from({ length: 5 }, () => okPrResponse({
+        mergeable: "UNKNOWN",
+        mergeStateStatus: "UNKNOWN"
+      }))
+    });
+    const blockedWrite = runWatcher([
+      "snapshot",
+      "--state-dir",
+      blockedWriteState.stateDir,
+      "--mergeability-retry-delay-ms",
+      "0"
+    ], { env: blockedWriteGh.env });
+    assert.equal(blockedWrite.status, 20, blockedWrite.stderr);
+    const blockedWriteSummary = parseStdoutJson(blockedWrite);
+    assert.equal(blockedWriteSummary.reason, "invalid_state_path");
+    assert.equal(blockedWriteSummary.snapshot_id, null);
+    assert.equal(existsSync(path.join(blockedWriteState.stateDir, "latest-snapshot.json")), false);
+
+    const releaseFailureState = resolvePrState({ stateDir: path.join(tmp, "release-failure") });
+    await writePrStateJson(releaseFailureState, "manager", "config.json", validConfig());
+    const releaseFailureGh = await writeFakeGh(path.join(tmp, "fake-release-failure"), {
+      graphql: [{ ...okPrResponse(), blockLockRelease: true }]
+    });
+    const releaseFailure = runWatcher(["snapshot", "--state-dir", releaseFailureState.stateDir], {
+      env: {
+        ...releaseFailureGh.env,
+        SCUBA_FAKE_GH_LOCK_PATH: path.join(releaseFailureState.stateDir, "pr-feedback.lock")
+      }
+    });
+    assert.equal(releaseFailure.status, 75, releaseFailure.stderr);
+    const releaseSummary = parseStdoutJson(releaseFailure);
+    assert.equal(releaseSummary.reason, "lock_release_blocked");
+    const releaseStatus = JSON.parse(await readFile(path.join(releaseFailureState.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(releaseStatus.status, "blocked_watcher_unavailable");
+    assert.equal(releaseStatus.reason, "lock_release_blocked");
+  });
+});
+
+test("local status/replay preserve last success and record real timing", async () => {
+  await withTempDir("snapshot-status-continuity", async (tmp) => {
+    const state = resolvePrState({ stateDir: path.join(tmp, "pr-state") });
+    await writePrStateJson(state, "manager", "config.json", validConfig());
+    const fakeGh = await writeFakeGh(path.join(tmp, "fake-success"), {
+      graphql: [{ sleepMs: 80, body: prGraphqlResponse() }]
+    });
+    const success = runWatcher(["snapshot", "--state-dir", state.stateDir], { env: fakeGh.env });
+    assert.equal(success.status, 0, success.stderr);
+    const successSummary = parseStdoutJson(success);
+    let statusRecord = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(statusRecord.last_successful_snapshot_id, successSummary.snapshot_id);
+    assert.ok(Date.parse(statusRecord.completed_at) > Date.parse(statusRecord.started_at));
+
+    const replay = runWatcher(["replay", "--state-dir", state.stateDir]);
+    assert.equal(replay.status, 0, replay.stderr);
+    statusRecord = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(statusRecord.last_successful_snapshot_id, successSummary.snapshot_id);
+
+    await writeFile(path.join(state.stateDir, "pr-feedback.lock"), JSON.stringify({
+      schema_version: 1,
+      lock_id: "stale-lock",
+      owner: "watcher",
+      pid: 99999999,
+      hostname: "stale-host",
+      started_at: "2026-06-27T00:00:00.000Z",
+      expires_at: "2026-06-27T00:00:01.000Z",
+      mode: "test",
+      operation: "stale"
+    }, null, 2) + "\n");
+    const status = runWatcher(["status", "--state-dir", state.stateDir, "--lock-stale-ms", "1", "--lock-timeout-ms", "25"]);
+    assert.equal(status.status, 0, status.stderr);
+    statusRecord = JSON.parse(await readFile(path.join(state.stateDir, "watcher-status.json"), "utf8"));
+    assert.equal(statusRecord.last_successful_snapshot_id, successSummary.snapshot_id);
+    assert.equal(statusRecord.stale_lock_break.previous_lock.operation, "stale");
   });
 });
 
@@ -2284,37 +2615,99 @@ async function writeFakeGh(tmp, scenario) {
 
 function fakeGhSource() {
   return `#!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const args = process.argv.slice(2);
 const scenario = JSON.parse(readFileSync(process.env.SCUBA_FAKE_GH_SCENARIO, "utf8"));
 const statePath = process.env.SCUBA_FAKE_GH_STATE;
 const logPath = process.env.SCUBA_FAKE_GH_LOG;
 const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { graphqlCalls: 0 };
+let activeResponse = null;
 
 appendFileSync(logPath, JSON.stringify({ args }) + "\\n");
+
+process.on("SIGTERM", () => {
+  if (activeResponse?.ignoreSigterm) return;
+  process.exit(143);
+});
 
 function save() {
   writeFileSync(statePath, JSON.stringify(state, null, 2) + "\\n");
 }
 
-function finish(response = {}) {
+async function finish(response = {}) {
+  activeResponse = response;
+  if (response.blockLockRelease) blockLockRelease();
+  if (Number.isSafeInteger(response.sleepMs) && response.sleepMs > 0) {
+    await sleep(response.sleepMs);
+  }
   if (response.stdout !== undefined) process.stdout.write(String(response.stdout));
   else if (response.body !== undefined) process.stdout.write(JSON.stringify(response.body));
   if (response.stderr !== undefined) process.stderr.write(String(response.stderr));
   process.exit(response.exitCode ?? 0);
 }
 
+function blockLockRelease() {
+  const lockPath = process.env.SCUBA_FAKE_GH_LOCK_PATH;
+  if (!lockPath) return;
+  const raw = readFileSync(lockPath, "utf8");
+  const lock = JSON.parse(raw);
+  const identity = {
+    schema_valid: true,
+    lock_id: lock.lock_id,
+    owner: lock.owner,
+    started_at: lock.started_at,
+    content_sha256: sha256(raw)
+  };
+  const identityKey = sha256(JSON.stringify(canonicalize(identity))).slice(0, 32);
+  const claimPath = path.join(path.dirname(lockPath), ".pr-feedback.lock.remove-" + identityKey + ".claim");
+  writeFileSync(claimPath, JSON.stringify({
+    kind: "pr-feedback-lock-removal-claim",
+    identity_key: identityKey,
+    pid: process.pid,
+    hostname: "fake-gh",
+    created_at: new Date().toISOString()
+  }, null, 2) + "\\n", { flag: "wx" });
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map((entry) => canonicalize(entry));
+  if (value && typeof value === "object") {
+    const normalized = {};
+    for (const key of Object.keys(value).sort()) normalized[key] = canonicalize(value[key]);
+    return normalized;
+  }
+  return value;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function hostnameArg() {
+  const index = args.indexOf("--hostname");
+  return index === -1 ? null : args[index + 1] ?? null;
+}
+
 if (args[0] === "auth" && args[1] === "status") {
-  finish(scenario.auth ?? { exitCode: 0, stdout: "github.com\\n" });
+  await finish(scenario.auth ?? { exitCode: 0, stdout: "github.com\\n" });
 }
 
 if (args[0] === "api" && args[1] === "graphql") {
+  if (scenario.requireApiHostname && hostnameArg() !== scenario.requireApiHostname) {
+    await finish({
+      exitCode: 2,
+      stderr: "api graphql missing --hostname " + scenario.requireApiHostname + "\\n"
+    });
+  }
   const responses = Array.isArray(scenario.graphql) ? scenario.graphql : [scenario.graphql ?? {}];
   const index = Math.min(state.graphqlCalls, responses.length - 1);
   state.graphqlCalls += 1;
   save();
-  finish(responses[index]);
+  await finish(responses[index]);
 }
 
 process.stderr.write("unexpected fake gh invocation: " + args.join(" ") + "\\n");
@@ -2333,24 +2726,27 @@ function prGraphqlResponse({
   contexts = [],
   pageInfo = { hasNextPage: false, endCursor: null },
   statusCheckRollup,
-  author = { login: "author" }
+  author = { login: "author" },
+  repoOwner = "octo",
+  repoName = "repo",
+  title = "S03 snapshot"
 } = {}) {
   return {
     data: {
       repository: {
         id: "R_kwDO_repo",
-        name: "repo",
-        owner: { login: "octo" },
+        name: repoName,
+        owner: { login: repoOwner },
         defaultBranchRef: { name: "main", target: { oid: "base123" } },
-        url: "https://github.com/octo/repo",
+        url: `https://github.com/${repoOwner}/${repoName}`,
         pullRequest: {
           id: "PR_kwDO_single",
           databaseId: 7,
           number: 7,
           state: "OPEN",
           isDraft: false,
-          title: "S03 snapshot",
-          url: "https://github.com/octo/repo/pull/7",
+          title,
+          url: `https://github.com/${repoOwner}/${repoName}/pull/7`,
           author,
           baseRefName: "main",
           baseRefOid: "base123",
@@ -2378,14 +2774,21 @@ function prGraphqlResponse({
 }
 
 function checkRun({
+  nodeId = "CR_kwDO_ci_test",
+  databaseId = 101,
   name,
   status = "COMPLETED",
   conclusion = "SUCCESS",
-  headSha = "abc123head"
+  headSha = "abc123head",
+  workflowRun,
+  commitOid
 } = {}) {
+  const resolvedWorkflowRun = workflowRun !== undefined ? workflowRun : { headSha };
+  const resolvedCommitOid = commitOid !== undefined ? commitOid : headSha;
   return {
     __typename: "CheckRun",
-    databaseId: 101,
+    id: nodeId,
+    databaseId,
     name,
     status,
     conclusion,
@@ -2394,7 +2797,8 @@ function checkRun({
     startedAt: "2026-06-28T00:01:00Z",
     completedAt: "2026-06-28T00:02:00Z",
     checkSuite: {
-      workflowRun: { headSha },
+      workflowRun: resolvedWorkflowRun,
+      commit: resolvedCommitOid ? { oid: resolvedCommitOid } : null,
       app: {
         databaseId: 15368,
         slug: "github-actions",
@@ -2499,6 +2903,25 @@ function runWatcher(args, options = {}) {
   return runNode([WATCHER, ...args], options);
 }
 
+function runWatcherWithFixedNow(args, fixedNow, options = {}) {
+  const source = `
+    const fixedNow = ${JSON.stringify(fixedNow)};
+    const RealDate = Date;
+    class FixedDate extends RealDate {
+      constructor(...args) {
+        super(...(args.length === 0 ? [fixedNow] : args));
+      }
+      static now() {
+        return new RealDate(fixedNow).getTime();
+      }
+    }
+    globalThis.Date = FixedDate;
+    process.argv = [process.execPath, ${JSON.stringify(WATCHER)}, ...${JSON.stringify(args)}];
+    await import(${JSON.stringify(pathToFileURL(WATCHER).href)});
+  `;
+  return runNode(["--input-type=module", "--eval", source], options);
+}
+
 function runNode(args, options = {}) {
   const result = spawnSync(process.execPath, args, {
     cwd: options.cwd ?? ROOT,
@@ -2534,6 +2957,10 @@ function fsPromisesMockLoader(mockSource) {
 function parseStdoutJson(result) {
   assert.ok(result.stdout.trim(), `expected stdout JSON, stderr was:\n${result.stderr}`);
   return JSON.parse(result.stdout);
+}
+
+function assertNoSecret(text, secret) {
+  assert.equal(String(text).includes(secret), false, `secret leaked in:\n${text}`);
 }
 
 async function withTempDir(label, fn) {

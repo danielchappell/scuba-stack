@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
+  link,
   mkdir,
   open,
   realpath,
@@ -241,8 +242,16 @@ export async function withPrStateLock(state, options, fn) {
 export async function writePrStateJson(state, owner, relativePath, value, options = {}) {
   assertOwnerCanWrite(owner, relativePath);
   return runStateWrite(state, owner, options, async () => {
-    await writeJsonAtomic(state, relativePath, value);
+    await writeJsonAtomic(state, relativePath, value, options);
   });
+}
+
+export async function assertPrStateWritable(state, owner, relativePath, options = {}) {
+  assertOwnerCanWrite(owner, relativePath);
+  if (options.lock) {
+    await assertLockGuardsState(options.lock, state, owner);
+  }
+  await prepareDestination(state, relativePath);
 }
 
 export async function writePrStateText(state, owner, relativePath, value, options = {}) {
@@ -588,11 +597,11 @@ async function assertLockGuardsState(lock, state, owner) {
   }
 }
 
-async function writeJsonAtomic(state, relativePath, value) {
-  await writeTextAtomic(state, relativePath, JSON.stringify(value, null, 2) + "\n");
+async function writeJsonAtomic(state, relativePath, value, options = {}) {
+  await writeTextAtomic(state, relativePath, JSON.stringify(value, null, 2) + "\n", options);
 }
 
-async function writeTextAtomic(state, relativePath, value) {
+async function writeTextAtomic(state, relativePath, value, options = {}) {
   const target = await prepareDestination(state, relativePath);
   const tempName = `.${target.name}.scuba-tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const tempPath = path.join(target.parentReal, tempName);
@@ -605,7 +614,12 @@ async function writeTextAtomic(state, relativePath, value) {
       await handle.close();
     }
     await assertDestinationSafe(target);
-    await rename(tempPath, target.path);
+    if (options.noOverwrite) {
+      await link(tempPath, target.path);
+      await rm(tempPath, { force: true });
+    } else {
+      await rename(tempPath, target.path);
+    }
     await fsyncDirectory(target.parentReal);
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => {});
